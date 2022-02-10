@@ -1,0 +1,151 @@
+use crate::ast::{Program, Decl, Stmt, Expr, Reg, Span, FileSpan, Symbol};
+
+grammar(file: usize);
+
+extern {
+    type Error = (&'static str, &'static str, FileSpan);
+}
+
+pub TopLevel: Program = "OPENQASM 2.0" ";" <decls:Span<Decl>*> => Program { decls };
+
+pub Included: Program = ("OPENQASM 2.0" ";")? <decls:Span<Decl>*> => Program { decls };
+
+Decl: Decl = {
+    "include" <filename:Span<String>> ";" => Decl::Include { file: filename },
+    "qreg" <reg:Span<Reg>> ";" => Decl::QReg { reg },
+    "creg" <reg:Span<Reg>> ";" => Decl::CReg { reg },
+    "opaque" <name:Span<Ident>> <params:MaybeList<Span<Ident>>> <args:Sep<Span<Ident>, ",">> ";" 
+        => Decl::Def { name, params, args, body: None },
+    "gate" <name:Span<Ident>> <params:MaybeList<Span<Ident>>> <args:Sep<Span<Ident>, ",">> "{" 
+        <body:Span<Stmt>*>
+    "}" => Decl::Def { name, params, args, body: Some(body) },
+    <Span<Stmt>> => Decl::Stmt(<>)
+};
+
+Stmt: Stmt = {
+    U "(" <theta:Span<Expr>> "," <phi:Span<Expr>> "," <lambda:Span<Expr>> ")" <reg:Span<Reg>> ";" => 
+        Stmt::U { theta, phi, lambda, reg},
+    CX <copy:Span<Reg>> "," <xor:Span<Reg>> ";" => Stmt::CX { copy, xor },
+    "measure" <from:Span<Reg>> "->" <to:Span<Reg>> ";" => Stmt::Measure { from, to },
+    "reset" <reg:Span<Reg>> ";" => Stmt::Reset { reg },
+    "barrier" <regs:Sep<Span<Reg>, ",">> ";" => Stmt::Barrier { regs },
+    <name:Span<Ident>> <params:MaybeList<Span<Expr>>> <args:Sep<Span<Reg>, ",">> ";" => Stmt::Gate { name, params, args },
+    "if" "(" <reg:Span<Reg>> "==" <val:Span<Int>> ")" <then:Span<Stmt>> => Stmt::Conditional { reg, val, then }
+};
+
+U = { "u", "U" };
+CX = { "cx", "CX" };
+
+Expr: Expr = {
+    #[precedence(level="0")]
+    "pi" => Expr::Pi,
+    <Real> => Expr::Real(<>),
+    <Int> => Expr::Int(<>),
+    <Ident> => Expr::Var(<>),
+    "(" <Expr> ")",
+    "sin" "(" <Span<Expr>> ")" => Expr::Sin(<>),
+    "cos" "(" <Span<Expr>> ")" => Expr::Cos(<>),
+    "tan" "(" <Span<Expr>> ")" => Expr::Tan(<>),
+    "exp" "(" <Span<Expr>> ")" => Expr::Exp(<>),
+    "ln" "(" <Span<Expr>> ")" => Expr::Ln(<>),
+    "sqrt" "(" <Span<Expr>> ")" => Expr::Sqrt(<>),
+
+    #[precedence(level="1")] #[assoc(side="right")]
+    <l:Span<Expr>> "^" <r:Span<Expr>> => Expr::Pow(l, r),
+    
+    #[precedence(level="2")] #[assoc(side="left")]
+    <l:Span<Expr>> "*" <r:Span<Expr>> => Expr::Mul(l, r),
+    <l:Span<Expr>> "/" <r:Span<Expr>> => Expr::Div(l, r),
+
+    #[precedence(level="3")] #[assoc(side="left")]
+    <l:Span<Expr>> "+" <r:Span<Expr>> => Expr::Add(l, r),
+    <l:Span<Expr>> "-" <r:Span<Expr>> => Expr::Sub(l, r)
+};
+
+Reg: Reg = {
+    <name:Ident> => Reg { name, index: None },
+    <name:Ident> "[" <index:Int> "]" => Reg { name, index: Some(index) }
+};
+
+Ident: Symbol = <identifier> => Symbol::new(<>);
+Int: usize = <left:@L> <integer:integer> <right:@R> =>? {
+    integer.parse()
+        .map_err(|_| lalrpop_util::ParseError::User { error: (
+            "Couldn't parse integer", "This could not be parsed, perhaps it is too large.",
+            FileSpan { start: left, end: right, file }
+        ) })
+};
+Real: f32 = <left:@L> <real:real> <right:@R> =>? {
+    real.parse()
+        .map_err(|_| lalrpop_util::ParseError::User { error: (
+            "Couldn't parse real", "This could not be parsed, perhaps it is too large.",
+            FileSpan { start: left, end: right, file }
+        ) })
+};
+String: Symbol = <string> => {
+    Symbol::new((<>).strip_prefix('"')
+        .unwrap_or("")
+        .strip_suffix('"')
+        .unwrap_or(""))
+};
+
+MaybeList<T>: Vec<T> = {
+    => Vec::new(),
+    "(" <Sep<T, ",">> ")"
+};
+
+Span<T>: Span<T> = <left:@L> <inner:T> <right:@R> => Span { span: FileSpan { start: left, end: right, file }, inner: Box::new(inner) };
+
+Sep<U, V>: Vec<U> = {
+    => Vec::new(),
+    <init:(<U> V)*> <tail:U> => {
+        let mut init = init;
+        init.push(tail);
+        init
+    }
+};
+
+match {
+    r"//[^\n\r]*[\n\r]*" => { },
+    r"\s*" => { },
+    "OPENQASM 2.0" => "OPENQASM 2.0",
+    "include" => "include",
+    "qreg" => "qreg",
+    "creg" => "creg",
+    "gate" => "gate",
+    "opaque" => "opaque",
+    "measure" => "measure",
+    "reset" => "reset",
+    "barrier" => "barrier",
+    "if" => "if",
+    "(" => "(",
+    ")" => ")",
+    "{" => "{",
+    "}" => "}",
+    "==" => "==",
+    ";" => ";",
+    "," => ",",
+    "u" => "u",
+    "U" => "U",
+    "cx" => "cx",
+    "CX" => "CX",
+    "pi" => "pi",
+    "sin" => "sin",
+    "cos" => "cos",
+    "tan" => "tan",
+    "exp" => "exp",
+    "ln" => "ln",
+    "sqrt" => "sqrt",
+    "^" => "^",
+    "*" => "*",
+    "/" => "/",
+    "+" => "+",
+    "-" => "-",
+    "[" => "[",
+    "]" => "]",
+    "->" => "->",
+    r"[a-zA-Z_][a-zA-Z0-9_]*" => identifier,
+    r"[0-9]+" => integer,
+    r"[0-9]+\.[0-9]+" => real,
+    r#""[^"]*""# => string
+}
