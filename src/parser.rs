@@ -70,6 +70,11 @@ impl SourceCache {
         &self.strings[&span.file][span.start..span.end]
     }
 
+    /// Get the path of the file that this `FileSpan` belongs to.
+    pub fn get_path(&self, span: FileSpan) -> Option<&Path> {
+        self.paths.get(&span.file).map(PathBuf::as_path)
+    }
+
     fn add_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<usize> {
         let path = path.as_ref().to_path_buf();
         if let Some(id) = self.files.get(&path) {
@@ -176,7 +181,7 @@ pub enum FileResult {
 pub enum FilePolicy<'a> {
     /// All requests result in an error.
     Deny,
-    /// All requests are silently ignored.
+    /// All requests except top-level ones are silently ignored.
     Ignore,
     /// Requests are made to the filesystem relative to the current directory.
     FileSystem {
@@ -306,7 +311,22 @@ impl<'a> Parser<'a> {
                 path: path.as_ref().to_path_buf(),
                 from,
             }),
-            FilePolicy::Ignore => (),
+            FilePolicy::Ignore => {
+                if from.is_none() {
+                    match parent
+                        .join(&path)
+                        .canonicalize()
+                        .and_then(|path| self.cache.add_file(path))
+                        .map_err(|error| ParseError::ReadUnableFilesystem {
+                            path: path.as_ref().to_path_buf(),
+                            from,
+                            error,
+                        }) {
+                        Ok(id) => self.parse_prog(id, from.is_none()),
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+            }
             FilePolicy::FileSystem { ref mut hardcoded } => {
                 if let Some(source) = hardcoded.get(path.as_ref()) {
                     match parent

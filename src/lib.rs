@@ -52,6 +52,11 @@
 //! pretty-printing of errors using the `ariadne` crate by providing
 //! `to_report` functions on all error types, as well as `Errors::eprint`/`print`.
 //!
+//! The `pretty` feature is enabled by default and allows pretty-printing of
+//! AST objects using the `pretty` crate. This will implement the `pretty::Pretty`
+//! trait on these objects, and also provides the `to_pretty` method to easily render
+//! to a string.
+//!
 
 #![deny(mutable_borrow_reservation_conflict)]
 
@@ -61,6 +66,9 @@ extern crate lalrpop_util;
 pub mod ast;
 pub mod parser;
 pub mod typing;
+
+//#[cfg(feature = "pretty")]
+mod pretty;
 
 use thiserror::Error;
 
