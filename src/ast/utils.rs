@@ -103,8 +103,10 @@ impl FileSpan {
 /// // print the error to stderr:
 /// err.eprint(&mut cache)
 /// ```
+#[cfg(feature = "ariadne")]
 pub type Report = ariadne::Report<FileSpan>;
 
+#[cfg(feature = "ariadne")]
 impl ariadne::Span for FileSpan {
     type SourceId = usize;
 

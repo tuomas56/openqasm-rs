@@ -1,7 +1,13 @@
-use crate::ast::{Decl, FileSpan, Program, Report};
-use ariadne::{Label, ReportKind, Source};
+use crate::ast::{Decl, FileSpan, Program};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[cfg(feature = "ariadne")]
+use {
+    crate::ast::Report,
+    ariadne::{Label, ReportKind, Source},
+};
 
 lalrpop_mod!(
     #[allow(clippy::all)]
@@ -26,6 +32,7 @@ lalrpop_mod!(
 pub struct SourceCache {
     files: HashMap<PathBuf, usize>,
     paths: HashMap<usize, PathBuf>,
+    #[cfg(feature = "ariadne")]
     sources: HashMap<usize, Source>,
     strings: HashMap<usize, String>,
     next_id: usize,
@@ -40,26 +47,38 @@ impl Default for SourceCache {
 impl SourceCache {
     /// Create an empty cache.
     pub fn new() -> SourceCache {
-        let mut sources = HashMap::new();
-        // We include the empty source in ID zero for errors which have no definite location.
-        sources.insert(0, Source::from(" "));
+        #[cfg(feature = "ariadne")]
+        let sources = {
+            let mut sources = HashMap::new();
+            // We include the empty source in ID zero for errors which have no definite location.
+            sources.insert(0, Source::from(" "));
+            sources
+        };
+
         SourceCache {
             files: HashMap::new(),
             paths: HashMap::new(),
+            #[cfg(feature = "ariadne")]
             sources,
             strings: HashMap::new(),
             next_id: 1,
         }
     }
 
+    /// Get the source code that is referred to by a `FileSpan`
+    pub fn get_source(&self, span: FileSpan) -> &str {
+        &self.strings[&span.file][span.start..span.end]
+    }
+
     fn add_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<usize> {
-        if let Some(id) = self.files.get(path.as_ref()) {
+        let path = path.as_ref().to_path_buf();
+        if let Some(id) = self.files.get(&path) {
             Ok(*id)
         } else {
             use std::io::Read;
 
             // The file is not cached, read it from the filesystem.
-            let mut file = std::fs::File::open(path.as_ref())?;
+            let mut file = std::fs::File::open(&path)?;
 
             let mut contents = String::new();
             file.read_to_string(&mut contents)?;
@@ -70,11 +89,12 @@ impl SourceCache {
                 contents.push(' ');
             }
 
-            self.files.insert(path.as_ref().to_path_buf(), self.next_id);
-            self.paths.insert(self.next_id, path.as_ref().to_path_buf());
-            self.sources
-                .insert(self.next_id, Source::from(contents.clone()));
-            self.strings.insert(self.next_id, contents);
+            self.files.insert(path.clone(), self.next_id);
+            self.paths.insert(self.next_id, path);
+            self.strings.insert(self.next_id, contents.clone());
+
+            #[cfg(feature = "ariadne")]
+            self.sources.insert(self.next_id, Source::from(contents));
 
             self.next_id += 1;
             Ok(self.next_id - 1)
@@ -92,9 +112,10 @@ impl SourceCache {
             self.paths.insert(self.next_id, path.as_ref().to_path_buf());
         }
 
-        self.sources
-            .insert(self.next_id, Source::from(source.clone()));
-        self.strings.insert(self.next_id, source);
+        self.strings.insert(self.next_id, source.clone());
+
+        #[cfg(feature = "ariadne")]
+        self.sources.insert(self.next_id, Source::from(source));
 
         self.next_id += 1;
         self.next_id - 1
@@ -105,6 +126,7 @@ impl SourceCache {
     }
 }
 
+#[cfg(feature = "ariadne")]
 impl ariadne::Cache<usize> for SourceCache {
     fn fetch(&mut self, id: &usize) -> Result<&Source, Box<dyn std::fmt::Debug + '_>> {
         Ok(&self.sources[id])
@@ -114,7 +136,23 @@ impl ariadne::Cache<usize> for SourceCache {
         if *id == 0 {
             None
         } else {
-            Some(Box::new(self.paths.get(id)?.display().to_string()))
+            let path = self.paths.get(id)?;
+            Some(Box::new(
+                // If the path is absolute, attempt to display it relative
+                // to the working directory.
+                path.is_absolute()
+                    .then(|| ())
+                    .and_then(|()| {
+                        std::env::current_dir()
+                            .and_then(|dir| dir.canonicalize())
+                            .ok()
+                            .and_then(|base| path.strip_prefix(base).ok())
+                    })
+                    // If there is an error, just display the whole path.
+                    .unwrap_or(path)
+                    .display()
+                    .to_string(),
+            ))
         }
     }
 }
@@ -133,16 +171,47 @@ pub enum FileResult {
 /// The action to take when a file is requested by the parser.
 ///
 /// The default choice is `FileSystem`, which loads the requested
-/// file relative to the current working directory.
+/// file relative to the current working directory. It also includes
+/// a list of files to hardcode. By default this is "qelib1.inc".
 pub enum FilePolicy<'a> {
     /// All requests result in an error.
     Deny,
     /// All requests are silently ignored.
     Ignore,
     /// Requests are made to the filesystem relative to the current directory.
-    FileSystem,
+    FileSystem {
+        /// The following files are hardcoded
+        /// and should be used if the same path does not exist locally.
+        /// By default, this is just "qelib1.inc". Please note that
+        /// the paths must be matched exactly in include statements.
+        hardcoded: HashMap<PathBuf, String>,
+    },
     /// Handle the requests with a custom function.
     Custom(&'a mut dyn FnMut(&Path) -> FileResult),
+}
+
+impl<'a> FilePolicy<'a> {
+    /// Create `FilePolicy::FileSystem` with "qelib1.inc" hardcoded.
+    pub fn filesystem() -> FilePolicy<'a> {
+        let mut hardcoded = HashMap::new();
+        hardcoded.insert(
+            PathBuf::from("qelib1.inc"),
+            include_str!("../includes/qelib1.inc").to_string(),
+        );
+        FilePolicy::FileSystem { hardcoded }
+    }
+
+    /// If this is a `FileSystem` variant, add a file to the hardcoded list.
+    /// If this is any other variant, panic.
+    pub fn with_file<P: AsRef<Path>>(mut self, path: P, source: &str) -> Self {
+        match self {
+            FilePolicy::FileSystem { ref mut hardcoded } => {
+                hardcoded.insert(path.as_ref().to_path_buf(), source.to_string());
+                self
+            }
+            _ => panic!("Can't add a hardcoded file to a non-FileSystem FilePolicy."),
+        }
+    }
 }
 
 /// Parser for OpenQASM 2.0 programs.
@@ -173,18 +242,15 @@ pub enum FilePolicy<'a> {
 ///     cx a, b;
 /// ");
 ///
-/// match parser.done() {
+/// match parser.done().to_errors() {
 ///     Ok(program) => ..., // do something with this
-///     Err(errors) => for error in errors {
-///         // print the error to stderr
-///         error.eprint(&mut cache).unwrap();
-///     }
+///     Err(errors) => errors.print(&mut cache).unwrap()
 /// }
 /// ```
 pub struct Parser<'a> {
     cache: &'a mut SourceCache,
     programs: HashMap<usize, Program>,
-    errors: Vec<Report>,
+    errors: Vec<ParseError>,
     policy: FilePolicy<'a>,
 }
 
@@ -195,7 +261,7 @@ impl<'a> Parser<'a> {
             cache,
             programs: HashMap::new(),
             errors: Vec::new(),
-            policy: FilePolicy::FileSystem,
+            policy: FilePolicy::filesystem(),
         }
     }
 
@@ -207,7 +273,7 @@ impl<'a> Parser<'a> {
 
     /// Attempt to parse the file at the given path.
     pub fn parse_file<P: AsRef<Path>>(&mut self, path: P) {
-        self.process_file(path, None);
+        self.process_file(path, Path::new("."), None);
     }
 
     /// Attempt to parse the given source code.
@@ -220,7 +286,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Stop the parser and return any errors encountered or the parsed AST.
-    pub fn done(self) -> Result<Program, Vec<Report>> {
+    pub fn done(self) -> Result<Program, Vec<ParseError>> {
         if self.errors.is_empty() {
             Ok(Program {
                 decls: self
@@ -234,52 +300,40 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn process_file<P: AsRef<Path>>(&mut self, path: P, from: Option<FileSpan>) {
+    fn process_file<P: AsRef<Path>>(&mut self, path: P, parent: &Path, from: Option<FileSpan>) {
         match self.policy {
-            FilePolicy::Deny => {
-                let err = Report::build(ReportKind::Error, 0usize, 0).with_message(format!(
-                    "File `{}` could not be read - sandboxing is enabled",
-                    path.as_ref().display()
-                ));
-
-                self.errors.push(match from {
-                    None => err.finish(),
-                    Some(span) => err
-                        .with_label(
-                            Label::new(span)
-                                .with_message("This file is included here")
-                                .with_color(ariadne::Color::Cyan),
-                        )
-                        .finish(),
-                });
-            }
+            FilePolicy::Deny => self.errors.push(ParseError::ReadUnableSandboxed {
+                path: path.as_ref().to_path_buf(),
+                from,
+            }),
             FilePolicy::Ignore => (),
-            FilePolicy::FileSystem => {
-                let res = self.cache.add_file(path.as_ref()).map_err(|e| match from {
-                    None => Report::build(ReportKind::Error, 0usize, 0)
-                        .with_message(format!(
-                            "File `{}` could not be read - {}",
-                            path.as_ref().display(),
-                            e
-                        ))
-                        .finish(),
-                    Some(span) => Report::build(ReportKind::Error, span.file, span.start)
-                        .with_message(format!(
-                            "File `{}` could not be read - {}",
-                            path.as_ref().display(),
-                            e
-                        ))
-                        .with_label(
-                            Label::new(span)
-                                .with_message("This file is included here.")
-                                .with_color(ariadne::Color::Cyan),
-                        )
-                        .finish(),
-                });
-
-                match res {
-                    Ok(id) => self.parse_prog(id, from.is_none()),
-                    Err(e) => self.errors.push(e),
+            FilePolicy::FileSystem { ref mut hardcoded } => {
+                if let Some(source) = hardcoded.get(path.as_ref()) {
+                    match parent
+                        .join(&path)
+                        .canonicalize()
+                        .and_then(|path| self.cache.add_file(path))
+                    {
+                        Ok(id) => self.parse_prog(id, from.is_none()),
+                        Err(_) => {
+                            let source = source.clone();
+                            let id = self.cache.add_source(source, Some(path));
+                            self.parse_prog(id, false);
+                        }
+                    }
+                } else {
+                    match parent
+                        .join(&path)
+                        .canonicalize()
+                        .and_then(|path| self.cache.add_file(path))
+                        .map_err(|error| ParseError::ReadUnableFilesystem {
+                            path: path.as_ref().to_path_buf(),
+                            from,
+                            error,
+                        }) {
+                        Ok(id) => self.parse_prog(id, from.is_none()),
+                        Err(e) => self.errors.push(e),
+                    }
                 }
             }
             FilePolicy::Custom(ref mut func) => {
@@ -293,25 +347,11 @@ impl<'a> Parser<'a> {
                         let id = self.cache.add_source(source, Some(path));
                         self.parse_prog(id, from.is_none());
                     }
-                    FileResult::Error(e) => {
-                        let err =
-                            Report::build(ReportKind::Error, 0usize, 0).with_message(format!(
-                                "File `{}` could not be read - {}",
-                                path.as_ref().display(),
-                                e
-                            ));
-
-                        self.errors.push(match from {
-                            None => err.finish(),
-                            Some(span) => err
-                                .with_label(
-                                    Label::new(span)
-                                        .with_message("This file is included here.")
-                                        .with_color(ariadne::Color::Cyan),
-                                )
-                                .finish(),
-                        });
-                    }
+                    FileResult::Error(error) => self.errors.push(ParseError::ReadUnableCustom {
+                        path: path.as_ref().to_path_buf(),
+                        from,
+                        error,
+                    }),
                 }
             }
         }
@@ -333,81 +373,59 @@ impl<'a> Parser<'a> {
         };
 
         let res = parse.map_err(|e| {
-            use lalrpop_util::ParseError;
+            use lalrpop_util::ParseError as PE;
             match e {
                 // An error occurred while parsing an integer or real.
-                ParseError::User {
+                PE::User {
                     error: (reason, label, span),
-                } => Report::build(ReportKind::Error, id, 0)
-                    .with_message(reason)
-                    .with_label(
-                        Label::new(span)
-                            .with_message(label)
-                            .with_color(ariadne::Color::Cyan),
-                    )
-                    .finish(),
+                } => ParseError::InvalidNumeric {
+                    reason,
+                    label,
+                    span,
+                },
                 // We got extra tokens after what was supposed to be EOF.
                 // I don't think this ever occurs.
-                ParseError::ExtraToken {
+                PE::ExtraToken {
                     token: (start, tok, end),
-                } => Report::build(ReportKind::Error, id, start)
-                    .with_message(format!("Unexpected token `{}`", tok))
-                    .with_label(
-                        Label::new(FileSpan {
-                            start,
-                            end,
-                            file: id,
-                        })
-                        .with_message("This token was unexpected")
-                        .with_color(ariadne::Color::Cyan),
-                    )
-                    .finish(),
+                } => ParseError::UnexpectedToken {
+                    token: tok.1.to_string(),
+                    expected: Vec::new(),
+                    span: FileSpan {
+                        start,
+                        end,
+                        file: id,
+                    },
+                },
                 // There is an invalid character sequence that does not match any token.
-                ParseError::InvalidToken { location } => {
-                    Report::build(ReportKind::Error, id, location)
-                        .with_message("Invalid token")
-                        .with_label(
-                            Label::new(FileSpan {
-                                start: location,
-                                end: location,
-                                file: id,
-                            })
-                            .with_message("This token is invalid")
-                            .with_color(ariadne::Color::Cyan),
-                        )
-                        .finish()
-                }
+                PE::InvalidToken { location } => ParseError::InvalidToken {
+                    span: FileSpan {
+                        start: location,
+                        end: location,
+                        file: id,
+                    },
+                },
                 // We had an EOF but we weren't done parsing.
-                ParseError::UnrecognizedEOF { location, expected } => {
-                    Report::build(ReportKind::Error, id, location)
-                        .with_message("Unexpected end of file")
-                        .with_label(
-                            Label::new(FileSpan {
-                                start: location,
-                                end: location,
-                                file: id,
-                            })
-                            .with_message(format!("Expected {} here", expected.join(" or ")))
-                            .with_color(ariadne::Color::Cyan),
-                        )
-                        .finish()
-                }
+                PE::UnrecognizedEOF { location, expected } => ParseError::UnexpectedEOF {
+                    expected,
+                    span: FileSpan {
+                        start: location,
+                        end: location,
+                        file: id,
+                    },
+                },
                 // We expected something else here.
-                ParseError::UnrecognizedToken {
+                PE::UnrecognizedToken {
                     token: (start, tok, end),
                     expected,
-                } => Report::build(ReportKind::Error, id, start)
-                    .with_message(format!("Unexpected token `{}`", tok))
-                    .with_label(
-                        Label::new(FileSpan {
-                            start,
-                            end,
-                            file: id,
-                        })
-                        .with_message(format!("Expected {} here", expected.join(" or ")))
-                        .with_color(ariadne::Color::Cyan),
-                    )
-                    .finish(),
+                } => ParseError::UnexpectedToken {
+                    expected,
+                    token: tok.1.to_string(),
+                    span: FileSpan {
+                        start,
+                        end,
+                        file: id,
+                    },
+                },
             }
         });
 
@@ -436,15 +454,190 @@ impl<'a> Parser<'a> {
             Some(path) => {
                 let parent = path.parent().unwrap().to_path_buf();
                 for (path, span) in includes {
-                    self.process_file(parent.join(path), Some(span));
+                    self.process_file(path, &parent, Some(span));
                 }
             }
             // If no, then we assume this is the top-level path:
             None => {
                 for (path, span) in includes {
-                    self.process_file(path, Some(span));
+                    self.process_file(path, Path::new("."), Some(span));
                 }
             }
+        }
+    }
+}
+
+/// An error produced during parsing.
+///
+/// This includes two types of errors:
+/// * `ReadUnable...` means a file couldn't be read
+/// while trying to include or open it,
+/// * Everything else is generated from the actual parsing itself.
+///
+#[derive(Debug, Error)]
+pub enum ParseError {
+    /// Can't read the file, the parser is sandboxed.
+    #[error("can't read file - sandboxed")]
+    ReadUnableSandboxed {
+        path: PathBuf,
+        from: Option<FileSpan>,
+    },
+    /// Can't read the file, the filesystem had an error.
+    #[error("can't read file - io error")]
+    ReadUnableFilesystem {
+        path: PathBuf,
+        from: Option<FileSpan>,
+        #[source]
+        error: std::io::Error,
+    },
+    /// Can't read the file, the custom handler had an error.
+    #[error("can't read file - custom error")]
+    ReadUnableCustom {
+        path: PathBuf,
+        from: Option<FileSpan>,
+        #[source]
+        error: Box<dyn std::error::Error>,
+    },
+    /// The token at this location is invalid.
+    #[error("invalid token")]
+    InvalidToken { span: FileSpan },
+    /// The token at this location was unexpected.
+    #[error("unexpected token")]
+    UnexpectedToken {
+        token: String,
+        expected: Vec<String>,
+        span: FileSpan,
+    },
+    /// A token was expected at this location.
+    #[error("unexpected eof")]
+    UnexpectedEOF {
+        expected: Vec<String>,
+        span: FileSpan,
+    },
+    /// Something went wrong while parsing an integer or real.
+    #[error("numeric parsing error")]
+    InvalidNumeric {
+        reason: &'static str,
+        label: &'static str,
+        span: FileSpan,
+    },
+}
+
+#[cfg(feature = "ariadne")]
+impl ParseError {
+    /// Convert this error into a `Report` for printing.
+    pub fn to_report(&self) -> Report {
+        match self {
+            ParseError::ReadUnableSandboxed { path, from } => {
+                let err = Report::build(ReportKind::Error, 0usize, 0).with_message(format!(
+                    "File `{}` could not be read - sandboxing is enabled",
+                    path.display()
+                ));
+
+                match from {
+                    None => err.finish(),
+                    Some(span) => err
+                        .with_label(
+                            Label::new(*span)
+                                .with_message("This file is included here")
+                                .with_color(ariadne::Color::Cyan),
+                        )
+                        .finish(),
+                }
+            }
+            ParseError::ReadUnableFilesystem { path, error, from } => {
+                let err = Report::build(ReportKind::Error, 0usize, 0).with_message(format!(
+                    "File `{}` could not be read - {}",
+                    path.display(),
+                    error
+                ));
+
+                match from {
+                    None => err.finish(),
+                    Some(span) => err
+                        .with_label(
+                            Label::new(*span)
+                                .with_message("This file is included here.")
+                                .with_color(ariadne::Color::Cyan),
+                        )
+                        .finish(),
+                }
+            }
+            ParseError::ReadUnableCustom { path, error, from } => {
+                let err = Report::build(ReportKind::Error, 0usize, 0).with_message(format!(
+                    "File `{}` could not be read - {}",
+                    path.display(),
+                    error
+                ));
+
+                match from {
+                    None => err.finish(),
+                    Some(span) => err
+                        .with_label(
+                            Label::new(*span)
+                                .with_message("This file is included here.")
+                                .with_color(ariadne::Color::Cyan),
+                        )
+                        .finish(),
+                }
+            }
+            ParseError::UnexpectedToken {
+                token,
+                expected,
+                span,
+            } => {
+                if expected.is_empty() {
+                    Report::build(ReportKind::Error, span.file, span.start)
+                        .with_message(format!("Unexpected token `{}`", token))
+                        .with_label(
+                            Label::new(*span)
+                                .with_message("This token was unexpected")
+                                .with_color(ariadne::Color::Cyan),
+                        )
+                        .finish()
+                } else {
+                    Report::build(ReportKind::Error, span.file, span.start)
+                        .with_message(format!("Unexpected token `{}`", token))
+                        .with_label(
+                            Label::new(*span)
+                                .with_message(format!("Expected {} here", expected.join(" or ")))
+                                .with_color(ariadne::Color::Cyan),
+                        )
+                        .finish()
+                }
+            }
+            ParseError::UnexpectedEOF { expected, span } => {
+                Report::build(ReportKind::Error, span.file, span.start)
+                    .with_message("Unexpected end of file")
+                    .with_label(
+                        Label::new(*span)
+                            .with_message(format!("Expected {} here", expected.join(" or ")))
+                            .with_color(ariadne::Color::Cyan),
+                    )
+                    .finish()
+            }
+            ParseError::InvalidToken { span } => {
+                Report::build(ReportKind::Error, span.file, span.start)
+                    .with_message("Invalid token")
+                    .with_label(
+                        Label::new(*span)
+                            .with_message("This token is invalid")
+                            .with_color(ariadne::Color::Cyan),
+                    )
+                    .finish()
+            }
+            ParseError::InvalidNumeric {
+                span,
+                reason,
+                label,
+            } => Report::build(ReportKind::Error, span.file, 0)
+                .with_message(reason)
+                .with_label(
+                    Label::new(*span)
+                        .with_message(label)
+                        .with_color(ariadne::Color::Cyan),
+                )
+                .finish(),
         }
     }
 }

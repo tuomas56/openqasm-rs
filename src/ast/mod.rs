@@ -96,6 +96,8 @@ pub enum Expr {
     Div(Span<Expr>, Span<Expr>),
     /// The exponentiation of two expressions.
     Pow(Span<Expr>, Span<Expr>),
+    /// The negation of an expression.
+    Neg(Span<Expr>),
     /// The sine of an expression.
     Sin(Span<Expr>),
     /// The cosine of an expression.

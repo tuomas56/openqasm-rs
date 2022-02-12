@@ -23,9 +23,9 @@ Decl: Decl = {
 };
 
 Stmt: Stmt = {
-    U "(" <theta:Span<Expr>> "," <phi:Span<Expr>> "," <lambda:Span<Expr>> ")" <reg:Span<Reg>> ";" => 
+    "U" "(" <theta:Span<Expr>> "," <phi:Span<Expr>> "," <lambda:Span<Expr>> ")" <reg:Span<Reg>> ";" => 
         Stmt::U { theta, phi, lambda, reg},
-    CX <copy:Span<Reg>> "," <xor:Span<Reg>> ";" => Stmt::CX { copy, xor },
+    "CX" <copy:Span<Reg>> "," <xor:Span<Reg>> ";" => Stmt::CX { copy, xor },
     "measure" <from:Span<Reg>> "->" <to:Span<Reg>> ";" => Stmt::Measure { from, to },
     "reset" <reg:Span<Reg>> ";" => Stmt::Reset { reg },
     "barrier" <regs:Sep<Span<Reg>, ",">> ";" => Stmt::Barrier { regs },
@@ -33,33 +33,36 @@ Stmt: Stmt = {
     "if" "(" <reg:Span<Reg>> "==" <val:Span<Int>> ")" <then:Span<Stmt>> => Stmt::Conditional { reg, val, then }
 };
 
-U = { "u", "U" };
-CX = { "cx", "CX" };
-
 Expr: Expr = {
-    #[precedence(level="0")]
+    <l:Span<Expr>> "+" <r:Span<ExprTerm>> => Expr::Add(l, r),
+    <l:Span<Expr>> "-" <r:Span<ExprTerm>> => Expr::Sub(l, r),
+    <ExprTerm>
+};
+
+ExprTerm: Expr = {
+    <l:Span<ExprTerm>> "*" <r:Span<ExprFactor>> => Expr::Mul(l, r),
+    <l:Span<ExprTerm>> "/" <r:Span<ExprFactor>> => Expr::Div(l, r),
+    <ExprFactor>
+};
+
+ExprFactor: Expr = {
+    "-" <Span<ExprFactor>> => Expr::Neg(<>),
+    <l:Span<ExprAtom>> "^" <r:Span<ExprFactor>> => Expr::Pow(l, r),
+    <ExprAtom>
+};
+
+ExprAtom: Expr = {
     "pi" => Expr::Pi,
     <Real> => Expr::Real(<>),
     <Int> => Expr::Int(<>),
     <Ident> => Expr::Var(<>),
-    "(" <Expr> ")",
     "sin" "(" <Span<Expr>> ")" => Expr::Sin(<>),
     "cos" "(" <Span<Expr>> ")" => Expr::Cos(<>),
     "tan" "(" <Span<Expr>> ")" => Expr::Tan(<>),
     "exp" "(" <Span<Expr>> ")" => Expr::Exp(<>),
     "ln" "(" <Span<Expr>> ")" => Expr::Ln(<>),
     "sqrt" "(" <Span<Expr>> ")" => Expr::Sqrt(<>),
-
-    #[precedence(level="1")] #[assoc(side="right")]
-    <l:Span<Expr>> "^" <r:Span<Expr>> => Expr::Pow(l, r),
-    
-    #[precedence(level="2")] #[assoc(side="left")]
-    <l:Span<Expr>> "*" <r:Span<Expr>> => Expr::Mul(l, r),
-    <l:Span<Expr>> "/" <r:Span<Expr>> => Expr::Div(l, r),
-
-    #[precedence(level="3")] #[assoc(side="left")]
-    <l:Span<Expr>> "+" <r:Span<Expr>> => Expr::Add(l, r),
-    <l:Span<Expr>> "-" <r:Span<Expr>> => Expr::Sub(l, r)
+    "(" <Expr> ")"
 };
 
 Reg: Reg = {
@@ -125,9 +128,7 @@ match {
     "==" => "==",
     ";" => ";",
     "," => ",",
-    "u" => "u",
     "U" => "U",
-    "cx" => "cx",
     "CX" => "CX",
     "pi" => "pi",
     "sin" => "sin",
