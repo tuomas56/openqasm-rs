@@ -1,9 +1,13 @@
 mod utils;
 pub use self::utils::*;
 
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
 /// Represents a whole program with defintions and statements.
 /// The definitions and declarations may cover more than one file.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Program {
     /// The declarations in this program.
     pub decls: Vec<Span<Decl>>,
@@ -11,6 +15,7 @@ pub struct Program {
 
 /// A declaration of some kind.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Decl {
     /// An `include` statement. These are usually resolved by the parser.
     Include {
@@ -45,6 +50,7 @@ pub enum Decl {
 
 /// A statement that represents an action.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Stmt {
     /// Apply a universal single-qubit unitary to a register.
     U {
@@ -77,6 +83,7 @@ pub enum Stmt {
 
 /// A parameter expression.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Expr {
     /// The circle constant Pi.
     Pi,
@@ -114,6 +121,7 @@ pub enum Expr {
 
 /// A reference to (or definition of) a register or qubit.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Reg {
     /// The name of the register.
     pub name: Symbol,
@@ -128,6 +136,7 @@ pub struct Reg {
 /// The span references where in the source code
 /// this object was derived from.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Span<T> {
     /// The span corresponding to this object.
     pub span: FileSpan,

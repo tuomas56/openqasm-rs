@@ -3,6 +3,9 @@ use std::collections::HashSet;
 use std::fmt;
 use std::rc::Rc;
 
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
 /// An interned string constant.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Symbol(Rc<str>);
@@ -38,6 +41,34 @@ impl fmt::Display for Symbol {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for Symbol {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Symbol {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct SymbolVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for SymbolVisitor {
+            type Value = Symbol;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "a symbol")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Symbol, E> {
+                Ok(Symbol::new(v))
+            }
+        }
+
+        d.deserialize_str(SymbolVisitor)
+    }
+}
+
 thread_local! {
     static INTERNER: Interner = Interner { inner: RefCell::new(HashSet::new()) };
 }
@@ -69,6 +100,7 @@ impl Symbol {
 
 /// Represents a span of code in a file.
 #[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FileSpan {
     pub(crate) start: usize,
     pub(crate) end: usize,

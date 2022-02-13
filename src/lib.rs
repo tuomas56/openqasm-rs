@@ -37,6 +37,22 @@
 //!     errors.print(&mut cache).unwrap();
 //! }
 //! ```
+//! 
+//! ### Translating
+//! 
+//! There are three different interfaces for translating parsed
+//! programs into different formats:
+//! 
+//! 1. `Linearize` is the highest-level interface, and converts a 
+//! program to a linear list of primitive and opaque gates, computing 
+//! all the parameters and substituting arguments.
+//! 
+//! 2. `ASTVisitor` is the lowest-level interface, and just walks the
+//! AST, with user-defined callbacks for definitions, statements etc.
+//! 
+//! 3. `GateVisitor` is a combination of the other two that walks the
+//! AST, but also computes parameters and argument substitutions and
+//! provides them to the callbacks.
 //!
 //! ### Error Handling
 //!
@@ -48,17 +64,21 @@
 //!
 //! ### Features
 //!
-//! The `ariadne` feature is enabled by default and allows
+//! The `ariadne` feature is disabled by default and allows
 //! pretty-printing of errors using the `ariadne` crate by providing
 //! `to_report` functions on all error types, as well as `Errors::eprint`/`print`.
 //!
-//! The `pretty` feature is enabled by default and allows pretty-printing of
+//! The `pretty` feature is disabled by default and allows pretty-printing of
 //! AST objects using the `pretty` crate. This will implement the `pretty::Pretty`
 //! trait on these objects, and also provides the `to_pretty` method to easily render
 //! to a string.
+//! 
+//! The `serde` feature is disabled by default and implements `serde::Serialize`
+//! and `serde::Deserialize` for all the AST types.
 //!
 
 #![deny(mutable_borrow_reservation_conflict)]
+#![cfg_attr(all(nightly_build, doc), feature(doc_auto_cfg))]
 
 #[macro_use]
 extern crate lalrpop_util;
@@ -66,8 +86,9 @@ extern crate lalrpop_util;
 pub mod ast;
 pub mod parser;
 pub mod typing;
+pub mod translate;
 
-//#[cfg(feature = "pretty")]
+#[cfg(feature = "pretty")]
 mod pretty;
 
 use thiserror::Error;
@@ -118,13 +139,13 @@ impl std::fmt::Display for Errors {
 #[cfg(feature = "ariadne")]
 impl Errors {
     /// Convert all errors into `Report`s.
-    pub fn as_reports(&self) -> impl Iterator<Item = ast::Report> + '_ {
+    pub fn to_reports(&self) -> impl Iterator<Item = ast::Report> + '_ {
         self.errors.iter().map(|err| err.to_report())
     }
 
     /// Print all the errors to stderr with `ariadne`.
     pub fn eprint(&self, cache: &mut parser::SourceCache) -> std::io::Result<()> {
-        for report in self.as_reports() {
+        for report in self.to_reports() {
             report.eprint(&mut *cache)?;
             eprintln!();
         }
@@ -133,7 +154,7 @@ impl Errors {
 
     /// Print all the errors to stdout with `ariadne`.
     pub fn print(&self, cache: &mut parser::SourceCache) -> std::io::Result<()> {
-        for report in self.as_reports() {
+        for report in self.to_reports() {
             report.print(&mut *cache)?;
             println!();
         }
@@ -146,7 +167,7 @@ impl Errors {
         cache: &mut parser::SourceCache,
         mut out: W,
     ) -> std::io::Result<()> {
-        for report in self.as_reports() {
+        for report in self.to_reports() {
             report.write(&mut *cache, &mut out)?;
             writeln!(&mut out, "")?;
         }
