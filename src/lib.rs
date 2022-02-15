@@ -37,22 +37,22 @@
 //!     errors.print(&mut cache).unwrap();
 //! }
 //! ```
-//! 
+//!
 //! ### Translating
-//! 
+//!
 //! There are three different interfaces for translating parsed
 //! programs into different formats:
-//! 
-//! 1. `Linearize` is the highest-level interface, and converts a 
-//! program to a linear list of primitive and opaque gates, computing 
+//!
+//! 1. `Linearize` is the highest-level interface, and converts a
+//! program to a linear list of primitive and opaque gates, computing
 //! all the parameters and substituting arguments.
-//! 
-//! 2. `ASTVisitor` is the lowest-level interface, and just walks the
+//!
+//! 2. `ProgramVisitor`/`ExprVisitor` is the lowest-level interface, and just walks the
 //! AST, with user-defined callbacks for definitions, statements etc.
-//! 
-//! 3. `GateVisitor` is a combination of the other two that walks the
-//! AST, but also computes parameters and argument substitutions and
-//! provides them to the callbacks.
+//!
+//! 3. `Interpreter`/`FrameVisitor` is the backend to `Linearize`, but
+//! has callbacks added so you can inspect and query the interpreter.
+//! This could be useful for applications like a REPL or debugger.
 //!
 //! ### Error Handling
 //!
@@ -72,7 +72,7 @@
 //! AST objects using the `pretty` crate. This will implement the `pretty::Pretty`
 //! trait on these objects, and also provides the `to_pretty` method to easily render
 //! to a string.
-//! 
+//!
 //! The `serde` feature is disabled by default and implements `serde::Serialize`
 //! and `serde::Deserialize` for all the AST types.
 //!
@@ -85,8 +85,8 @@ extern crate lalrpop_util;
 
 pub mod ast;
 pub mod parser;
-pub mod typing;
 pub mod translate;
+pub mod typing;
 
 #[cfg(feature = "pretty")]
 mod pretty;

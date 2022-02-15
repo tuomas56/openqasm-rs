@@ -2,7 +2,7 @@ mod utils;
 pub use self::utils::*;
 
 #[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Represents a whole program with defintions and statements.
 /// The definitions and declarations may cover more than one file.
@@ -142,4 +142,12 @@ pub struct Span<T> {
     pub span: FileSpan,
     /// The actual object itself.
     pub inner: Box<T>,
+}
+
+impl<T> std::ops::Deref for Span<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &*self.inner
+    }
 }

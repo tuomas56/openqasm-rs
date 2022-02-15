@@ -4,7 +4,7 @@ use std::fmt;
 use std::rc::Rc;
 
 #[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// An interned string constant.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -52,7 +52,7 @@ impl serde::Serialize for Symbol {
 impl<'de> serde::Deserialize<'de> for Symbol {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct SymbolVisitor;
-        
+
         impl<'de> serde::de::Visitor<'de> for SymbolVisitor {
             type Value = Symbol;
 
