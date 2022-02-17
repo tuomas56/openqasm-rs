@@ -1,6 +1,6 @@
 # openqasm-rs
 
-![](https://img.shields.io/crates/v/openqasm) ![](https://img.shields.io/crates/l/openqasm) ![](https://img.shields.io/docsrs/openqasm)
+[![](https://img.shields.io/crates/v/openqasm)](https://crates.io/crates/openqasm) ![](https://img.shields.io/crates/l/openqasm) [![](https://img.shields.io/docsrs/openqasm)](https://docs.rs/openqasm)
 
 This crate implements a parser, type-checker and translator for OpenQASM 2.0. 
 
