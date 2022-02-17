@@ -49,7 +49,7 @@
 //!
 //! 2. `ProgramVisitor`/`ExprVisitor` is the low-level interface, and just walks the
 //! AST, with user-defined callbacks for definitions, statements etc.
-//! 
+//!
 //! Example Usage:
 //! ```ignore
 //! let program = ...; // acquire a program from somewhere.
@@ -106,6 +106,8 @@ pub enum Error {
     ParseError(#[from] parser::ParseError),
     #[error(transparent)]
     TypeError(#[from] typing::TypeError),
+    #[error(transparent)]
+    LinearizeError(#[from] translate::LinearizeError),
 }
 
 impl Error {
@@ -115,6 +117,7 @@ impl Error {
         match self {
             Error::ParseError(e) => e.to_report(),
             Error::TypeError(e) => e.to_report(),
+            Error::LinearizeError(e) => e.to_report(),
         }
     }
 }
@@ -226,6 +229,6 @@ where
     }
 }
 
-pub use ast::{Decl, Expr, Program, Reg, Stmt, Span};
+pub use ast::{Decl, Expr, Program, Reg, Span, Stmt};
 pub use parser::{Parser, SourceCache};
-pub use translate::{Linearize, GateWriter, ProgramVisitor, ExprVisitor};
+pub use translate::{ExprVisitor, GateWriter, Linearize, ProgramVisitor};

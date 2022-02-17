@@ -1,6 +1,13 @@
 use crate::ast::{Decl, Expr, FileSpan, Program, Reg, Span, Stmt, Symbol};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use thiserror::Error;
+
+#[cfg(feature = "ariadne")]
+use {
+    crate::ast::Report,
+    ariadne::{Label, ReportKind},
+};
 
 mod value;
 pub use value::Value;
@@ -337,12 +344,13 @@ struct FrameEvaluator<'a> {
 // when evaluating a parameter. Unfortunately, there
 // are still some we don't catch, for example
 // certain uses of constants that don't fit in a i64.
-// Additionally, a lot of errors will just show up as 
+// Additionally, a lot of errors will just show up as
 // `ApproximateFail(NaN)`
 #[derive(Debug)]
 enum EvalError {
     DivideByZero,
-    ApproximateFail(num::Complex<f32>),
+    ApproximateFail(f32),
+    OverflowError,
 }
 
 impl<'a> ExprVisitor for FrameEvaluator<'a> {
@@ -357,14 +365,13 @@ impl<'a> ExprVisitor for FrameEvaluator<'a> {
     }
 
     fn real(&mut self, val: f32) -> Self::Output {
-        Value::from_float(num::Complex::new(val, 0.0))
-            .ok_or(EvalError::ApproximateFail(num::Complex::new(val, 0.0)))
+        Value::from_float(val).ok_or(EvalError::ApproximateFail(val))
     }
 
     fn unop(&mut self, op: Unop, a: Self::Output) -> Self::Output {
         let a = a?;
         match op {
-            Unop::Neg => Ok(a.neg()),
+            Unop::Neg => a.neg_internal(),
             Unop::Sin => a.sin_internal(),
             Unop::Cos => a.cos_internal(),
             Unop::Tan => a.tan_internal(),
@@ -377,9 +384,9 @@ impl<'a> ExprVisitor for FrameEvaluator<'a> {
     fn binop(&mut self, op: Binop, a: Self::Output, b: Self::Output) -> Self::Output {
         let (a, b) = (a?, b?);
         match op {
-            Binop::Add => Ok(a + b),
-            Binop::Sub => Ok(a - b),
-            Binop::Mul => Ok(a * b),
+            Binop::Add => a.add_internal(b),
+            Binop::Sub => a.sub_internal(b),
+            Binop::Mul => a.mul_internal(b),
             Binop::Div => a.div_internal(b),
             Binop::Pow => a.pow_internal(b),
         }
@@ -392,6 +399,7 @@ impl<'a> ExprVisitor for FrameEvaluator<'a> {
 
 pub struct Frame {
     name: Symbol,
+    def_name: Symbol,
     call: Option<FileSpan>,
     qregs: HashMap<Symbol, (usize, usize)>,
     cregs: HashMap<Symbol, (usize, usize)>,
@@ -404,54 +412,20 @@ pub struct Definition {
     gates: Option<Vec<Span<Stmt>>>,
 }
 
-/// An error that occured while linearizing a program.
-/// This error contains both the call stack leading up
-/// to this error, as well as the kind of error that occured.
-/// `stack` is layed out as a list of function names and call
-/// for those functions, from oldest to youngest (i.e the 
-/// current stack frame is the end of `stack`).
-#[derive(Debug)]
-pub struct LinearizeError {
-    pub stack: Vec<(Symbol, FileSpan)>,
-    pub kind: LinearizeErrorKind,
-}
-
-/// The type of error that occurred while linearizing.
-#[derive(Debug)]
-pub enum LinearizeErrorKind {
-    /// A division by zero happened while computing this parameter.
-    DivideByZero {
-        span: FileSpan,
-    },
-    /// A value could not be converted from float to rational
-    /// while computing this parameter.
-    ApproximateFail {
-        span: FileSpan,
-        value: num::Complex<f32>,
-    },
-    /// A `CX` gate or opaque gate was called with non-distinct arguments.
-    OverlappingRegs {
-        /// This argument overlaps with the other.
-        a: FileSpan,
-        /// This argument overlaps with the other.
-        b: FileSpan,
-    },
-}
-
 /// High-level translation interface.
-/// 
+///
 /// This structure is used to turn a program into a linear
 /// list of gates. It uses a value that implements `GateWriter`
 /// to output primitive gates to some medium.
-/// 
+///
 /// This can be used by constructing one with `Linearize::new`
 /// with your chosen `GateWriter`, and then using the `ProgramVisitor`
 /// impl to call `.visit_program` on your program.
-/// 
+///
 /// Note that it is assumed you have type-checked your program first.
 /// If you haven't you may get garbage output / random panics. If
 /// you have type-checked it, you shouldn't get any panics.
-/// 
+///
 /// Example:
 /// ```ignore
 /// struct GatePrinter;
@@ -489,7 +463,7 @@ pub enum LinearizeErrorKind {
 ///         println!("}}");
 ///     }
 /// }
-/// 
+///
 /// fn main() {
 ///     let program = ...; // acquire a program from somewhere.
 ///     program.type_check().unwrap(); // make sure to type check.
@@ -508,20 +482,20 @@ pub struct Linearize<T> {
 }
 
 /// Output format from `Linearize`.
-/// 
+///
 /// This trait is used by `Linearize` to actually output the
 /// linearized program. It contains various methods to output
-/// a primitive operation. Qubits and bits are labelled by integers
-/// 0 to `nqubits` and 0 to `nbits` respectively, and parameters
+/// a primitive operation. Qubits and bits are referenced by
+/// consecutive integers starting from zero, and parameters
 /// are provided as `Value`s.
-/// 
+///
 /// The only non-obvious methods are `initialize`, which provides
-/// the number of qubits and bits to the backend, and is called
-/// exactly once, before any other function, and `start/end_conditional`.
-/// These are called before and after any statements that are intended
+/// the names of qubits and bits to the backend, and is called
+/// exactly once, before any other function. `start/end_conditional`
+/// is called before and after any statements that are intended
 /// to be conditional on a classical value.
 pub trait GateWriter: Sized {
-    fn initialize(&mut self, nqubits: usize, nbits: usize);
+    fn initialize(&mut self, qubits: &[Symbol], bits: &[Symbol]);
     fn write_cx(&mut self, copy: usize, xor: usize);
     fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize);
     fn write_opaque(&mut self, name: &Symbol, params: &[Value], args: &[usize]);
@@ -541,6 +515,7 @@ impl<T> Linearize<T> {
             stack: Vec::new(),
             frame: Frame {
                 name: Symbol::new("<toplevel>"),
+                def_name: Symbol::new("<toplevel>"),
                 call: None,
                 qregs: HashMap::new(),
                 cregs: HashMap::new(),
@@ -680,7 +655,24 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // Since this is first called after all register declarations,
         // now is a good time to initialize the backend.
         if !self.initialized {
-            self.writer.initialize(self.next_qid, self.next_cid);
+            let mut qubits = vec![Symbol::new(""); self.next_qid];
+            let mut bits = vec![Symbol::new(""); self.next_cid];
+
+            for (name, (base, size)) in &self.frame.qregs {
+                for offset in 0..*size {
+                    let n = Symbol::new(format!("{name}[{offset}]"));
+                    qubits[*base + offset] = n;
+                }
+            }
+
+            for (name, (base, size)) in &self.frame.cregs {
+                for offset in 0..*size {
+                    let n = Symbol::new(format!("{name}[{offset}]"));
+                    bits[*base + offset] = n;
+                }
+            }
+
+            self.writer.initialize(&qubits, &bits);
             self.initialized = true;
         }
 
@@ -780,6 +772,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                 span: theta.span,
                 value,
             },
+            EvalError::OverflowError => LinearizeErrorKind::NumericalOverflow { span: theta.span },
         }))?;
         let phi = self.err(eval.visit_expr(phi).map_err(|e| match e {
             EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: phi.span },
@@ -787,6 +780,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                 span: phi.span,
                 value,
             },
+            EvalError::OverflowError => LinearizeErrorKind::NumericalOverflow { span: phi.span },
         }))?;
         let lambda = self.err(eval.visit_expr(lambda).map_err(|e| match e {
             EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: lambda.span },
@@ -794,6 +788,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                 span: lambda.span,
                 value,
             },
+            EvalError::OverflowError => LinearizeErrorKind::NumericalOverflow { span: lambda.span },
         }))?;
 
         // Now do a unitary for each referenced qubit.
@@ -815,7 +810,8 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
 
         // We may need to push a new stack frame.
         let mut frame = Frame {
-            name: name.to_symbol(),
+            name: self.frame.def_name.to_symbol(),
+            def_name: name.to_symbol(),
             call: Some(name.span),
             cregs: HashMap::new(),
             qregs: HashMap::new(),
@@ -833,6 +829,9 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                     span: param.span,
                     value,
                 },
+                EvalError::OverflowError => {
+                    LinearizeErrorKind::NumericalOverflow { span: param.span }
+                }
             }))?;
 
             // If this is opaque, we will need the parameters as a list.
@@ -923,5 +922,110 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         self.visit_stmt(then)?;
         self.writer.end_conditional();
         Ok(())
+    }
+}
+
+/// An error that occured while linearizing a program.
+/// This error contains both the call stack leading up
+/// to this error, as well as the kind of error that occured.
+/// `stack` is layed out as a list of function names and call
+/// for those functions, from oldest to youngest (i.e the
+/// current stack frame is the end of `stack`).
+#[derive(Debug, Error)]
+#[error("linearization error")]
+pub struct LinearizeError {
+    pub stack: Vec<(Symbol, FileSpan)>,
+    #[source]
+    pub kind: LinearizeErrorKind,
+}
+
+/// The type of error that occurred while linearizing.
+#[derive(Debug, Error)]
+pub enum LinearizeErrorKind {
+    /// A division by zero happened while computing this parameter.
+    #[error("division by zero")]
+    DivideByZero { span: FileSpan },
+    /// A value could not be converted from float to rational
+    /// while computing this parameter.
+    #[error("float approximation fail")]
+    ApproximateFail { span: FileSpan, value: f32 },
+    /// This expression had an overflow.
+    #[error("numerical overflow")]
+    NumericalOverflow { span: FileSpan },
+    /// A `CX` gate or opaque gate was called with non-distinct arguments.
+    #[error("overlapping arguments")]
+    OverlappingRegs {
+        /// This argument overlaps with the other.
+        a: FileSpan,
+        /// This argument overlaps with the other.
+        b: FileSpan,
+    },
+}
+
+#[cfg(feature = "ariadne")]
+impl LinearizeError {
+    pub fn to_report(&self) -> Report {
+        let mut base = match self.kind {
+            LinearizeErrorKind::DivideByZero { span } => {
+                Report::build(ReportKind::Error, span.file, span.start)
+                    .with_message("Division by zero in parameter evaluation")
+                    .with_label(Label::new(span)
+                        .with_message("This expression had an error.")
+                        .with_color(ariadne::Color::Cyan))
+            },
+            LinearizeErrorKind::NumericalOverflow { span } => {
+                Report::build(ReportKind::Error, span.file, span.start)
+                    .with_message("Numerical overflow in parameter evaluation")
+                    .with_label(Label::new(span)
+                        .with_message("This expression had an error.")
+                        .with_color(ariadne::Color::Cyan))
+            },
+            LinearizeErrorKind::ApproximateFail { value, span } => {
+                Report::build(ReportKind::Error, span.file, span.start)
+                    .with_message("Could not approximate float in parameter evaluation")
+                    .with_label(Label::new(span)
+                        .with_message(format!("Part of this expression evaluated to {}, which cannot be represented.", value))
+                        .with_color(ariadne::Color::Cyan))
+                    .with_note(concat!(
+                        "Parameter values are represented in the form `a + bπ` for `a` and `b` rationals to preserve accuracy.",
+                        "Not all floats can be represented in this form, however this usually indicates an error in your calculations as unrepresentable",
+                        "values are not physically meaningful (they are either very large or invalid)."
+                    ))
+            },
+            LinearizeErrorKind::OverlappingRegs { a, b } => {
+                Report::build(ReportKind::Error, a.file, a.start)
+                    .with_message("Overlapping arguments to primitive gate")
+                    .with_label(Label::new(a)
+                        .with_message("The register is first referenced here.")
+                        .with_color(ariadne::Color::Cyan)
+                        .with_order(0))
+                    .with_label(Label::new(b)
+                        .with_message("This overlaps with the previous reference.")
+                        .with_color(ariadne::Color::Cyan)
+                        .with_order(1))
+            }
+        };
+
+        let mut cols = ariadne::ColorGenerator::new();
+        for (i, (name, call)) in self.stack.iter().enumerate().rev() {
+            let kind = match i {
+                0 => "Top level frame".to_string(),
+                _ => format!("Frame {i}"),
+            };
+
+            let rest = if name.as_str() == "<toplevel>" {
+                String::new()
+            } else {
+                format!(" in `{name}`")
+            };
+
+            base = base.with_label(
+                Label::new(*call)
+                    .with_message(format!("{kind} originated here{rest}."))
+                    .with_color(cols.next()),
+            );
+        }
+
+        base.finish()
     }
 }

@@ -39,6 +39,7 @@ required-features = ["pretty"]
 
 [[example]]
 name = "linear"
+required-features = ["ariadne"]
 
 [package.metadata.docs.rs]
 all-features = true

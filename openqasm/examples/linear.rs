@@ -9,7 +9,7 @@ use oq::{
 struct GatePrinter;
 
 impl GateWriter for GatePrinter {
-    fn initialize(&mut self, _: usize, _: usize) {}
+    fn initialize(&mut self, _: &[Symbol], _: &[Symbol]) {}
 
     fn write_cx(&mut self, copy: usize, xor: usize) {
         println!("cx {copy} {xor}");
@@ -49,12 +49,17 @@ fn example(path: &str, cache: &mut oq::SourceCache) -> Result<(), oq::Errors> {
     program.type_check().to_errors()?;
 
     let mut l = oq::translate::Linearize::new(GatePrinter);
-    l.visit_program(&program).unwrap();
+    l.visit_program(&program).to_errors()?;
 
     Ok(())
 }
 
 fn main() {
     let mut cache = oq::SourceCache::new();
-    example(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/good.qasm"), &mut cache).unwrap();
+    if let Err(e) = example(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/good.qasm"),
+        &mut cache,
+    ) {
+        e.print(&mut cache).unwrap();
+    }
 }
