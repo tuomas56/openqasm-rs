@@ -1,4 +1,9 @@
-use crate::ast::{Decl, Expr, Program, Reg, Span, Stmt, Symbol};
+use crate::ast::{Decl, Expr, FileSpan, Program, Reg, Span, Stmt, Symbol};
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+mod value;
+pub use value::Value;
 
 /// A binary operation encountered in an `Expr`.
 #[derive(Debug, Copy, Clone)]
@@ -36,10 +41,12 @@ pub enum Unop {
 ///
 /// Also note that the declarations are garuanteed to be visited in the
 /// following order by type: `Include`, `Def`, `QReg`, `CReg`, `Stmt`.
+/// The error type is provided to allow you to fail out at any time by
+/// returning an `Err` variant.
 ///
 /// For example, to get the names of all gate definitions in a program,
 /// you might do the following:
-/// ```rust
+/// ```ignore
 /// struct DefFinder;
 ///
 /// impl ProgramVisitor for DefFinder {
@@ -62,48 +69,52 @@ pub enum Unop {
 /// ```
 #[allow(unused_variables)]
 pub trait ProgramVisitor {
-    fn visit_program(&mut self, program: &Span<Program>) {
-        self.walk_program(program);
+    type Error;
+
+    fn visit_program(&mut self, program: &Program) -> Result<(), Self::Error> {
+        self.walk_program(program)
     }
 
-    fn walk_program(&mut self, program: &Span<Program>) {
+    fn walk_program(&mut self, program: &Program) -> Result<(), Self::Error> {
         for decl in &program.decls {
             if matches!(&*decl.inner, Decl::Include { .. }) {
-                self.visit_decl(decl);
+                self.visit_decl(decl)?;
             }
         }
 
         for decl in &program.decls {
             let decl = decl;
             if matches!(&*decl.inner, Decl::Def { .. }) {
-                self.visit_decl(decl);
+                self.visit_decl(decl)?;
             }
         }
 
         for decl in &program.decls {
             if matches!(&*decl.inner, Decl::QReg { .. }) {
-                self.visit_decl(decl);
+                self.visit_decl(decl)?;
             }
         }
 
         for decl in &program.decls {
             if matches!(&*decl.inner, Decl::CReg { .. }) {
-                self.visit_decl(decl);
+                self.visit_decl(decl)?;
             }
         }
 
         for decl in &program.decls {
             if matches!(&*decl.inner, Decl::Stmt(..)) {
-                self.visit_decl(decl);
+                self.visit_decl(decl)?;
             }
         }
+
+        Ok(())
     }
 
-    fn visit_decl(&mut self, decl: &Span<Decl>) {
+    fn visit_decl(&mut self, decl: &Span<Decl>) -> Result<(), Self::Error> {
         self.walk_decl(decl)
     }
 
-    fn walk_decl(&mut self, decl: &Span<Decl>) {
+    fn walk_decl(&mut self, decl: &Span<Decl>) -> Result<(), Self::Error> {
         match &*decl.inner {
             Decl::Include { file } => self.visit_include(file),
             Decl::QReg { reg } => self.visit_qreg(reg),
@@ -121,28 +132,35 @@ pub trait ProgramVisitor {
         }
     }
 
-    fn visit_include(&mut self, file: &Span<Symbol>) {}
+    fn visit_include(&mut self, file: &Span<Symbol>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_qreg(&mut self, reg: &Span<Reg>) {}
+    fn visit_qreg(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_creg(&mut self, reg: &Span<Reg>) {}
+    fn visit_creg(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     fn visit_opaque_def(
         &mut self,
         name: &Span<Symbol>,
         params: &[Span<Symbol>],
         args: &[Span<Symbol>],
-    ) {
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     fn visit_gate_def(
         &mut self,
-        name: &Symbol,
+        name: &Span<Symbol>,
         params: &[Span<Symbol>],
         args: &[Span<Symbol>],
         body: &[Span<Stmt>],
-    ) {
-        self.walk_gate_def(name, params, args, body);
+    ) -> Result<(), Self::Error> {
+        self.walk_gate_def(name, params, args, body)
     }
 
     fn walk_gate_def(
@@ -151,17 +169,18 @@ pub trait ProgramVisitor {
         params: &[Span<Symbol>],
         args: &[Span<Symbol>],
         body: &[Span<Stmt>],
-    ) {
+    ) -> Result<(), Self::Error> {
         for stmt in body {
-            self.visit_stmt(stmt);
+            self.visit_stmt(stmt)?
         }
+        Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &Span<Stmt>) {
-        self.walk_stmt(stmt);
+    fn visit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<(), Self::Error> {
+        self.walk_stmt(stmt)
     }
 
-    fn walk_stmt(&mut self, stmt: &Span<Stmt>) {
+    fn walk_stmt(&mut self, stmt: &Span<Stmt>) -> Result<(), Self::Error> {
         match &*stmt.inner {
             Stmt::Barrier { regs } => self.visit_barrier(&regs),
             Stmt::Measure { from, to } => self.visit_measure(from, to),
@@ -178,13 +197,21 @@ pub trait ProgramVisitor {
         }
     }
 
-    fn visit_barrier(&mut self, regs: &[Span<Reg>]) {}
+    fn visit_barrier(&mut self, regs: &[Span<Reg>]) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_measure(&mut self, from: &Span<Reg>, to: &Span<Reg>) {}
+    fn visit_measure(&mut self, from: &Span<Reg>, to: &Span<Reg>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_reset(&mut self, reg: &Span<Reg>) {}
+    fn visit_reset(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_cx(&mut self, copy: &Span<Reg>, xor: &Span<Reg>) {}
+    fn visit_cx(&mut self, copy: &Span<Reg>, xor: &Span<Reg>) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     fn visit_u(
         &mut self,
@@ -192,21 +219,35 @@ pub trait ProgramVisitor {
         phi: &Span<Expr>,
         lambda: &Span<Expr>,
         reg: &Span<Reg>,
-    ) {
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 
-    fn visit_gate(&mut self, name: &Span<Symbol>, params: &[Span<Expr>], args: &[Span<Reg>]) {
-        self.walk_gate(name, params, args);
+    fn visit_gate(
+        &mut self,
+        name: &Span<Symbol>,
+        params: &[Span<Expr>],
+        args: &[Span<Reg>],
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 
-    fn walk_gate(&mut self, name: &Span<Symbol>, params: &[Span<Expr>], args: &[Span<Reg>]) {}
-
-    fn visit_conditional(&mut self, reg: &Span<Reg>, val: &Span<usize>, then: &Span<Stmt>) {
-        self.walk_conditional(reg, val, then);
+    fn visit_conditional(
+        &mut self,
+        reg: &Span<Reg>,
+        val: &Span<usize>,
+        then: &Span<Stmt>,
+    ) -> Result<(), Self::Error> {
+        self.walk_conditional(reg, val, then)
     }
 
-    fn walk_conditional(&mut self, reg: &Span<Reg>, val: &Span<usize>, then: &Span<Stmt>) {
-        self.visit_stmt(then);
+    fn walk_conditional(
+        &mut self,
+        reg: &Span<Reg>,
+        val: &Span<usize>,
+        then: &Span<Stmt>,
+    ) -> Result<(), Self::Error> {
+        self.visit_stmt(then)
     }
 }
 
@@ -222,7 +263,7 @@ pub trait ProgramVisitor {
 ///
 /// For example, if you wanted to compute the maximum integer
 /// value that appeared in an expression, you could do:
-/// ```rust
+/// ```ignore
 /// struct MaxFinder;
 ///
 /// impl ExprVisitor for MaxFinder {
@@ -285,5 +326,602 @@ pub trait ExprVisitor {
     fn visit_unop(&mut self, op: Unop, a: &Span<Expr>) -> Self::Output {
         let a = self.visit_expr(a);
         self.unop(op, a)
+    }
+}
+
+struct FrameEvaluator<'a> {
+    frame: &'a Frame,
+}
+
+// These are the possible errors that can occur
+// when evaluating a parameter. Unfortunately, there
+// are still some we don't catch, for example
+// certain uses of constants that don't fit in a i64.
+// Additionally, a lot of errors will just show up as 
+// `ApproximateFail(NaN)`
+#[derive(Debug)]
+enum EvalError {
+    DivideByZero,
+    ApproximateFail(num::Complex<f32>),
+}
+
+impl<'a> ExprVisitor for FrameEvaluator<'a> {
+    type Output = Result<Value, EvalError>;
+
+    fn pi(&mut self) -> Self::Output {
+        Ok(Value::PI)
+    }
+
+    fn int(&mut self, val: usize) -> Self::Output {
+        Ok(Value::int(val as i64))
+    }
+
+    fn real(&mut self, val: f32) -> Self::Output {
+        Value::from_float(num::Complex::new(val, 0.0))
+            .ok_or(EvalError::ApproximateFail(num::Complex::new(val, 0.0)))
+    }
+
+    fn unop(&mut self, op: Unop, a: Self::Output) -> Self::Output {
+        let a = a?;
+        match op {
+            Unop::Neg => Ok(a.neg()),
+            Unop::Sin => a.sin_internal(),
+            Unop::Cos => a.cos_internal(),
+            Unop::Tan => a.tan_internal(),
+            Unop::Exp => a.exp_internal(),
+            Unop::Ln => a.ln_internal(),
+            Unop::Sqrt => a.sqrt_internal(),
+        }
+    }
+
+    fn binop(&mut self, op: Binop, a: Self::Output, b: Self::Output) -> Self::Output {
+        let (a, b) = (a?, b?);
+        match op {
+            Binop::Add => Ok(a + b),
+            Binop::Sub => Ok(a - b),
+            Binop::Mul => Ok(a * b),
+            Binop::Div => a.div_internal(b),
+            Binop::Pow => a.pow_internal(b),
+        }
+    }
+
+    fn lookup(&mut self, var: &Symbol) -> Self::Output {
+        Ok(self.frame.params[var])
+    }
+}
+
+pub struct Frame {
+    name: Symbol,
+    call: Option<FileSpan>,
+    qregs: HashMap<Symbol, (usize, usize)>,
+    cregs: HashMap<Symbol, (usize, usize)>,
+    params: HashMap<Symbol, Value>,
+}
+
+pub struct Definition {
+    args: Vec<Symbol>,
+    params: Vec<Symbol>,
+    gates: Option<Vec<Span<Stmt>>>,
+}
+
+/// An error that occured while linearizing a program.
+/// This error contains both the call stack leading up
+/// to this error, as well as the kind of error that occured.
+/// `stack` is layed out as a list of function names and call
+/// for those functions, from oldest to youngest (i.e the 
+/// current stack frame is the end of `stack`).
+#[derive(Debug)]
+pub struct LinearizeError {
+    pub stack: Vec<(Symbol, FileSpan)>,
+    pub kind: LinearizeErrorKind,
+}
+
+/// The type of error that occurred while linearizing.
+#[derive(Debug)]
+pub enum LinearizeErrorKind {
+    /// A division by zero happened while computing this parameter.
+    DivideByZero {
+        span: FileSpan,
+    },
+    /// A value could not be converted from float to rational
+    /// while computing this parameter.
+    ApproximateFail {
+        span: FileSpan,
+        value: num::Complex<f32>,
+    },
+    /// A `CX` gate or opaque gate was called with non-distinct arguments.
+    OverlappingRegs {
+        /// This argument overlaps with the other.
+        a: FileSpan,
+        /// This argument overlaps with the other.
+        b: FileSpan,
+    },
+}
+
+/// High-level translation interface.
+/// 
+/// This structure is used to turn a program into a linear
+/// list of gates. It uses a value that implements `GateWriter`
+/// to output primitive gates to some medium.
+/// 
+/// This can be used by constructing one with `Linearize::new`
+/// with your chosen `GateWriter`, and then using the `ProgramVisitor`
+/// impl to call `.visit_program` on your program.
+/// 
+/// Note that it is assumed you have type-checked your program first.
+/// If you haven't you may get garbage output / random panics. If
+/// you have type-checked it, you shouldn't get any panics.
+/// 
+/// Example:
+/// ```ignore
+/// struct GatePrinter;
+///
+/// impl GateWriter for GatePrinter {
+///     fn initialize(&mut self, _: usize, _: usize) {}
+///
+///     fn write_cx(&mut self, copy: usize, xor: usize) {
+///         println!("cx {copy} {xor}");
+///     }
+///
+///     fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize) {
+///         println!("u({theta}, {phi}, {lambda}) {reg}");
+///     }
+///
+///     fn write_opaque(&mut self, name: &Symbol, _: &[Value], _: &[usize]) {
+///         println!("opaque gate {}", name)
+///     }
+///
+///     fn write_barrier(&mut self, _: &[usize]) {}
+///
+///     fn write_measure(&mut self, from: usize, to: usize) {
+///         println!("measure {} -> {}", from, to);
+///     }
+///
+///     fn write_reset(&mut self, reg: usize) {
+///         println!("reset {reg}");
+///     }
+///
+///     fn start_conditional(&mut self, reg: usize, count: usize, value: usize) {
+///         println!("if ({reg}:{count} == {value}) {{");
+///     }
+///
+///     fn end_conditional(&mut self) {
+///         println!("}}");
+///     }
+/// }
+/// 
+/// fn main() {
+///     let program = ...; // acquire a program from somewhere.
+///     program.type_check().unwrap(); // make sure to type check.
+///     let mut l = Linearize::new(GatePrinter);
+///     l.visit_program(&program).unwrap();
+/// }
+/// ```
+pub struct Linearize<T> {
+    next_qid: usize,
+    next_cid: usize,
+    defs: HashMap<Symbol, Rc<Definition>>,
+    stack: Vec<Frame>,
+    frame: Frame,
+    initialized: bool,
+    writer: T,
+}
+
+/// Output format from `Linearize`.
+/// 
+/// This trait is used by `Linearize` to actually output the
+/// linearized program. It contains various methods to output
+/// a primitive operation. Qubits and bits are labelled by integers
+/// 0 to `nqubits` and 0 to `nbits` respectively, and parameters
+/// are provided as `Value`s.
+/// 
+/// The only non-obvious methods are `initialize`, which provides
+/// the number of qubits and bits to the backend, and is called
+/// exactly once, before any other function, and `start/end_conditional`.
+/// These are called before and after any statements that are intended
+/// to be conditional on a classical value.
+pub trait GateWriter: Sized {
+    fn initialize(&mut self, nqubits: usize, nbits: usize);
+    fn write_cx(&mut self, copy: usize, xor: usize);
+    fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize);
+    fn write_opaque(&mut self, name: &Symbol, params: &[Value], args: &[usize]);
+    fn write_barrier(&mut self, regs: &[usize]);
+    fn write_measure(&mut self, from: usize, to: usize);
+    fn write_reset(&mut self, reg: usize);
+    fn start_conditional(&mut self, reg: usize, count: usize, val: usize);
+    fn end_conditional(&mut self);
+}
+
+impl<T> Linearize<T> {
+    pub fn new(writer: T) -> Linearize<T> {
+        Linearize {
+            next_qid: 0,
+            next_cid: 0,
+            defs: HashMap::new(),
+            stack: Vec::new(),
+            frame: Frame {
+                name: Symbol::new("<toplevel>"),
+                call: None,
+                qregs: HashMap::new(),
+                cregs: HashMap::new(),
+                params: HashMap::new(),
+            },
+            initialized: false,
+            writer,
+        }
+    }
+
+    // Check that these args are distinct.
+    fn assert_different(
+        &mut self,
+        a: usize,
+        b: usize,
+        aspan: FileSpan,
+        bspan: FileSpan,
+    ) -> Result<(), LinearizeError> {
+        if a == b {
+            self.err(Err(LinearizeErrorKind::OverlappingRegs {
+                a: aspan,
+                b: bspan,
+            }))
+        } else {
+            Ok(())
+        }
+    }
+
+    // Convert an error kind into an actual error
+    // by recording a backtrace.
+    fn err<V>(&self, e: Result<V, LinearizeErrorKind>) -> Result<V, LinearizeError> {
+        e.map_err(|kind| {
+            let mut stack: Vec<_> = self
+                .stack
+                .iter()
+                .filter_map(|frame| Some((frame.name.clone(), frame.call?)))
+                .collect();
+
+            if let Some(call) = self.frame.call {
+                stack.push((self.frame.name.clone(), call));
+            }
+
+            LinearizeError { stack, kind }
+        })
+    }
+
+    // Convert a register reference to a qubit number and a size.
+    // The qubit number corresponds to the base of this reference,
+    // and the remaining qubits in the register are the next
+    // consecutive size bits.
+    fn resolve_qreg(&self, reg: &Reg) -> (usize, usize) {
+        match reg.index {
+            None => self.frame.qregs[&reg.name],
+            Some(idx) => {
+                let base = self.frame.qregs[&reg.name].0;
+                (base + idx, 1)
+            }
+        }
+    }
+
+    fn resolve_creg(&self, reg: &Reg) -> (usize, usize) {
+        match reg.index {
+            None => self.frame.cregs[&reg.name],
+            Some(idx) => {
+                let base = self.frame.cregs[&reg.name].0;
+                (base + idx, 1)
+            }
+        }
+    }
+}
+
+impl<T: GateWriter> ProgramVisitor for Linearize<T> {
+    type Error = LinearizeError;
+
+    // Since ProgramVisitor guarantees that all the definitions
+    // and register declarations are visited first, this is ok
+    // to do at the same time as everything else.
+    fn visit_opaque_def(
+        &mut self,
+        name: &Span<Symbol>,
+        params: &[Span<Symbol>],
+        args: &[Span<Symbol>],
+    ) -> Result<(), Self::Error> {
+        let def = Definition {
+            args: args.iter().map(|s| s.to_symbol()).collect(),
+            params: params.iter().map(|s| s.to_symbol()).collect(),
+            gates: None,
+        };
+
+        self.defs.insert(name.to_symbol(), Rc::new(def));
+
+        Ok(())
+    }
+
+    fn visit_gate_def(
+        &mut self,
+        name: &Span<Symbol>,
+        params: &[Span<Symbol>],
+        args: &[Span<Symbol>],
+        gates: &[Span<Stmt>],
+    ) -> Result<(), Self::Error> {
+        let def = Definition {
+            args: args.iter().map(|s| s.to_symbol()).collect(),
+            params: params.iter().map(|s| s.to_symbol()).collect(),
+            gates: Some(gates.to_vec()),
+        };
+
+        self.defs.insert(name.to_symbol(), Rc::new(def));
+
+        Ok(())
+    }
+
+    fn visit_qreg(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        // Allocate some registers to the current frame
+        // and bump `next_qid` by the appropriate amount,
+        // so that the qubits are layed out consecutively.
+        let size = reg.index.unwrap_or(1);
+        self.frame
+            .qregs
+            .insert(reg.name.to_symbol(), (self.next_qid, size));
+        self.next_qid += size;
+
+        Ok(())
+    }
+
+    fn visit_creg(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        let size = reg.index.unwrap_or(1);
+        self.frame
+            .cregs
+            .insert(reg.name.to_symbol(), (self.next_cid, size));
+        self.next_cid += size;
+
+        Ok(())
+    }
+
+    fn visit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<(), Self::Error> {
+        // Since this is first called after all register declarations,
+        // now is a good time to initialize the backend.
+        if !self.initialized {
+            self.writer.initialize(self.next_qid, self.next_cid);
+            self.initialized = true;
+        }
+
+        self.walk_stmt(stmt)
+    }
+
+    fn visit_barrier(&mut self, regs: &[Span<Reg>]) -> Result<(), Self::Error> {
+        // Get all regs referenced by these expressions
+        // regardless of size of matching.
+        let mut args = HashSet::new();
+        for reg in regs {
+            let (base, size) = self.resolve_qreg(reg);
+            for offset in 0..size {
+                args.insert(base + offset);
+            }
+        }
+
+        let args = args.drain().collect::<Vec<_>>();
+        self.writer.write_barrier(&args);
+
+        Ok(())
+    }
+
+    fn visit_measure(&mut self, from: &Span<Reg>, to: &Span<Reg>) -> Result<(), Self::Error> {
+        let (fbase, fsize) = self.resolve_qreg(from);
+        let (tbase, tsize) = self.resolve_creg(to);
+
+        if fsize == tsize {
+            // Many - many
+            for offset in 0..fsize {
+                self.writer.write_measure(fbase + offset, tbase + offset);
+            }
+        } else if fsize == 1 {
+            // One - many
+            for offset in 0..tsize {
+                self.writer.write_measure(fbase, tbase + offset);
+            }
+        } else {
+            // Many - one
+            for offset in 0..fsize {
+                self.writer.write_measure(fbase + offset, tbase);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn visit_reset(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
+        let (base, size) = self.resolve_qreg(reg);
+        for offset in 0..size {
+            self.writer.write_reset(base + offset);
+        }
+
+        Ok(())
+    }
+
+    fn visit_cx(&mut self, copy: &Span<Reg>, xor: &Span<Reg>) -> Result<(), Self::Error> {
+        let (cbase, csize) = self.resolve_qreg(copy);
+        let (xbase, xsize) = self.resolve_qreg(xor);
+
+        // Same as with visit_measure but this time they have to be
+        // distinct as the CX of two identical gates is not well defined.
+        if csize == xsize {
+            for offset in 0..csize {
+                self.assert_different(cbase + offset, xbase + offset, copy.span, xor.span)?;
+                self.writer.write_cx(cbase + offset, xbase + offset);
+            }
+        } else if csize == 1 {
+            for offset in 0..xsize {
+                self.assert_different(cbase, xbase + offset, copy.span, xor.span)?;
+                self.writer.write_cx(cbase, xbase + offset);
+            }
+        } else {
+            for offset in 0..csize {
+                self.assert_different(cbase + offset, xbase, copy.span, xor.span)?;
+                self.writer.write_cx(cbase + offset, xbase);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn visit_u(
+        &mut self,
+        theta: &Span<Expr>,
+        phi: &Span<Expr>,
+        lambda: &Span<Expr>,
+        reg: &Span<Reg>,
+    ) -> Result<(), Self::Error> {
+        // Evaluate the parameters in this frame.
+        let mut eval = FrameEvaluator { frame: &self.frame };
+
+        let theta = self.err(eval.visit_expr(theta).map_err(|e| match e {
+            // Add the span information to the raw errors.
+            EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: theta.span },
+            EvalError::ApproximateFail(value) => LinearizeErrorKind::ApproximateFail {
+                span: theta.span,
+                value,
+            },
+        }))?;
+        let phi = self.err(eval.visit_expr(phi).map_err(|e| match e {
+            EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: phi.span },
+            EvalError::ApproximateFail(value) => LinearizeErrorKind::ApproximateFail {
+                span: phi.span,
+                value,
+            },
+        }))?;
+        let lambda = self.err(eval.visit_expr(lambda).map_err(|e| match e {
+            EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: lambda.span },
+            EvalError::ApproximateFail(value) => LinearizeErrorKind::ApproximateFail {
+                span: lambda.span,
+                value,
+            },
+        }))?;
+
+        // Now do a unitary for each referenced qubit.
+        let (base, size) = self.resolve_qreg(reg);
+        for offset in 0..size {
+            self.writer.write_u(theta, phi, lambda, base + offset);
+        }
+
+        Ok(())
+    }
+
+    fn visit_gate(
+        &mut self,
+        name: &Span<Symbol>,
+        params: &[Span<Expr>],
+        args: &[Span<Reg>],
+    ) -> Result<(), Self::Error> {
+        let def = self.defs[name.as_symbol()].clone();
+
+        // We may need to push a new stack frame.
+        let mut frame = Frame {
+            name: name.to_symbol(),
+            call: Some(name.span),
+            cregs: HashMap::new(),
+            qregs: HashMap::new(),
+            params: HashMap::new(),
+        };
+
+        // First, evaluate all the parameters.
+        let mut eval = FrameEvaluator { frame: &self.frame };
+
+        let mut values = Vec::new();
+        for (param, name) in params.iter().zip(&def.params) {
+            let value = self.err(eval.visit_expr(param).map_err(|e| match e {
+                EvalError::DivideByZero => LinearizeErrorKind::DivideByZero { span: param.span },
+                EvalError::ApproximateFail(value) => LinearizeErrorKind::ApproximateFail {
+                    span: param.span,
+                    value,
+                },
+            }))?;
+
+            // If this is opaque, we will need the parameters as a list.
+            if def.gates.is_none() {
+                values.push(value);
+            } else {
+                // Otherwise, just add them to the new stack frame.
+                frame.params.insert(name.clone(), value);
+            }
+        }
+
+        // Find the maximum register size. Since these are matched,
+        // this is also the size of all non-single registers.
+        let size = args
+            .iter()
+            .map(|a| self.resolve_qreg(a).1)
+            .max()
+            .unwrap_or(0);
+        // Record which registers are fixed, and which are looped over.
+        let fixed = args
+            .iter()
+            .map(|a| self.resolve_qreg(a).1 == 1)
+            .collect::<Vec<_>>();
+        // Record the base addresses of all registers.
+        let mut argsn = args
+            .iter()
+            .map(|a| self.resolve_qreg(a).0)
+            .collect::<Vec<_>>();
+
+        if def.gates.is_some() {
+            // Push the current frame onto the stack and replace it with the new one.
+            self.stack.push(std::mem::replace(&mut self.frame, frame));
+        }
+
+        for _ in 0..size {
+            // If we have an opaque gate, we must have all the qubits distinct.
+            if def.gates.is_none() {
+                for i in 0..argsn.len() {
+                    for j in 0..i {
+                        self.assert_different(argsn[i], argsn[j], args[i].span, args[j].span)?;
+                    }
+                }
+            }
+
+            match &def.gates {
+                Some(gates) => {
+                    // This gate has a body, so process it. First insert
+                    // all of the arguments as quantum registers of size one.
+                    for (name, arg) in def.args.iter().zip(&argsn) {
+                        self.frame.qregs.insert(name.clone(), (*arg, 1));
+                    }
+
+                    // Then recurse on the body.
+                    for stmt in gates {
+                        self.visit_stmt(stmt)?;
+                    }
+                }
+                None => {
+                    // If this is opaque, write it out straight away.
+                    self.writer.write_opaque(name, &values, &argsn);
+                }
+            }
+
+            // Advance all the large registers in lock-step.
+            for i in 0..argsn.len() {
+                if !fixed[i] {
+                    argsn[i] += 1;
+                }
+            }
+        }
+
+        // If we had a new stack frame, pop it off.
+        if def.gates.is_some() {
+            self.frame = self.stack.pop().unwrap();
+        }
+
+        Ok(())
+    }
+
+    fn visit_conditional(
+        &mut self,
+        reg: &Span<Reg>,
+        val: &Span<usize>,
+        then: &Span<Stmt>,
+    ) -> Result<(), Self::Error> {
+        let (base, size) = self.frame.qregs[&reg.name];
+        self.writer.start_conditional(base, size, **val);
+        self.visit_stmt(then)?;
+        self.writer.end_conditional();
+        Ok(())
     }
 }

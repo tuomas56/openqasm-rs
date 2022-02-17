@@ -5,7 +5,7 @@
 //! The main interface for parsing is the `parser::Parser` struct, and this
 //! produces either a `ast::Program` or a list of `parser::ParseError`s.
 //! Example Usage:
-//! ```rust
+//! ```ignore
 //! let mut cache = SourceCache::new();
 //! let mut parser = Parser::new(&mut cache);
 //! parser.parse_file("test.qasm");
@@ -29,7 +29,7 @@
 //! errors before translation.
 //!
 //! Example Usage:
-//! ```rust
+//! ```ignore
 //! let mut cache = SourceCache::new();
 //! let program: Program = ...; // obtain a program somehow
 //!
@@ -43,16 +43,20 @@
 //! There are three different interfaces for translating parsed
 //! programs into different formats:
 //!
-//! 1. `Linearize` is the highest-level interface, and converts a
+//! 1. `Linearize`/`GateWriter` is the high-level interface, and converts a
 //! program to a linear list of primitive and opaque gates, computing
 //! all the parameters and substituting arguments.
 //!
-//! 2. `ProgramVisitor`/`ExprVisitor` is the lowest-level interface, and just walks the
+//! 2. `ProgramVisitor`/`ExprVisitor` is the low-level interface, and just walks the
 //! AST, with user-defined callbacks for definitions, statements etc.
-//!
-//! 3. `Interpreter`/`FrameVisitor` is the backend to `Linearize`, but
-//! has callbacks added so you can inspect and query the interpreter.
-//! This could be useful for applications like a REPL or debugger.
+//! 
+//! Example Usage:
+//! ```ignore
+//! let program = ...; // acquire a program from somewhere.
+//! program.type_check().unwrap(); // make sure to type check.
+//! let mut l = Linearize::new(...); // linearize into into someoutput.
+//! l.visit_program(&program).unwrap();
+//! ```
 //!
 //! ### Error Handling
 //!
@@ -182,7 +186,7 @@ impl Errors {
 /// need to handle them explicitly (which is most of the time).
 ///
 /// Example Usage:
-/// ```rust
+/// ```ignore
 /// fn test() -> Result<(), Errors> {
 ///     ...
 ///     let program = parser.done().to_errors()?;
@@ -222,5 +226,6 @@ where
     }
 }
 
-pub use ast::{Decl, Expr, Program, Reg, Stmt};
+pub use ast::{Decl, Expr, Program, Reg, Stmt, Span};
 pub use parser::{Parser, SourceCache};
+pub use translate::{Linearize, GateWriter, ProgramVisitor, ExprVisitor};

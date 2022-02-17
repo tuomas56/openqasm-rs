@@ -22,7 +22,7 @@ lalrpop_mod!(
 /// result in panics and/or garbage output.
 ///
 /// Example Usage:
-/// ```rust
+/// ```ignore
 /// let mut cache = SourceCache::new();
 /// // Do something that creates an error
 /// let err: Report = ...
@@ -235,7 +235,7 @@ impl<'a> FilePolicy<'a> {
 /// or `include` statement.
 ///
 /// Example Usage:
-/// ```rust
+/// ```ignore
 /// let mut cache = SourceCache::new();
 /// let mut parser = Parser::new(&mut cache);
 ///

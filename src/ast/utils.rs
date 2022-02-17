@@ -127,7 +127,7 @@ impl FileSpan {
 /// you will get panics or garbage output.
 ///
 /// Example Usage:
-/// ```rust
+/// ```ignore
 /// let mut cache = SourceCache::new();
 /// // generate an error, e.g from parsing, making sure to
 /// // use `cache` as the source cache.
