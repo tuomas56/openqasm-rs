@@ -13,12 +13,12 @@ fn main() {
     let mut cache = oq::SourceCache::new();
 
     println!("Processing: good.qasm:");
-    if let Err(errors) = example("examples/good.qasm", &mut cache) {
+    if let Err(errors) = example(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/good.qasm"), &mut cache) {
         errors.print(&mut cache).unwrap();
     }
 
     println!("Processing: bad.qasm:");
-    if let Err(errors) = example("examples/bad.qasm", &mut cache) {
+    if let Err(errors) = example(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/bad.qasm"), &mut cache) {
         errors.print(&mut cache).unwrap();
     }
 }

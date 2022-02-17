@@ -56,5 +56,5 @@ fn example(path: &str, cache: &mut oq::SourceCache) -> Result<(), oq::Errors> {
 
 fn main() {
     let mut cache = oq::SourceCache::new();
-    example("examples/good.qasm", &mut cache).unwrap();
+    example(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/good.qasm"), &mut cache).unwrap();
 }
