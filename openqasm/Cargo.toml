@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Tuomas Laakkonen <pigworts2@gmail.com>"]
 description = "Parser and translator for OpenQASM 2.0"
 repository = "https://github.com/tuomas56/openqasm-rs"
+homepage = "https://github.com/tuomas56/openqasm-rs"
 license = "MIT or Apache-2.0"
 keywords = ["quantum", "qasm"]
 categories = ["parser-implementations", "compilers"]

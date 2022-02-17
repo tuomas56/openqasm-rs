@@ -397,7 +397,7 @@ impl<'a> ExprVisitor for FrameEvaluator<'a> {
     }
 }
 
-pub struct Frame {
+struct Frame {
     name: Symbol,
     def_name: Symbol,
     call: Option<FileSpan>,
@@ -406,7 +406,7 @@ pub struct Frame {
     params: HashMap<Symbol, Value>,
 }
 
-pub struct Definition {
+struct Definition {
     args: Vec<Symbol>,
     params: Vec<Symbol>,
     gates: Option<Vec<Span<Stmt>>>,
