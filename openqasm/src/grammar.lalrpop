@@ -1,14 +1,57 @@
 use crate::ast::{Program, Decl, Stmt, Expr, Reg, Span, FileSpan, Symbol};
+use super::Token;
 
 grammar(file: usize);
 
 extern {
-    type Error = (&'static str, &'static str, FileSpan);
+    type Location = usize;
+    type Error = FileSpan;
+
+    enum Token {
+        "OPENQASM 2.0" => Token::OPENQASM,
+        "include" => Token::Include,
+        "qreg" => Token::QReg,
+        "creg" => Token::CReg,
+        "gate" => Token::Gate,
+        "opaque" => Token::Opaque,
+        "measure" => Token::Measure,
+        "reset" => Token::Reset,
+        "barrier" => Token::Barrier,
+        "if" => Token::If,
+        "(" => Token::LParen,
+        ")" => Token::RParen,
+        "{" => Token::LBrace,
+        "}" => Token::RBrace,
+        "==" => Token::Equals,
+        ";" => Token::Semicolon,
+        "," => Token::Comma,
+        "U" => Token::U,
+        "CX" => Token::CX,
+        "pi" => Token::Pi,
+        "sin" => Token::Sin,
+        "cos" => Token::Cos,
+        "tan" => Token::Tan,
+        "exp" => Token::Exp,
+        "ln" => Token::Ln,
+        "sqrt" => Token::Sqrt,
+        "^" => Token::Pow,
+        "*" => Token::Mul,
+        "/" => Token::Div,
+        "+" => Token::Add,
+        "-" => Token::Sub,
+        "[" => Token::LBracket,
+        "]" => Token::RBracket,
+        "->" => Token::Arrow,
+        identifier => Token::Identifier(<Symbol>),
+        integer => Token::Integer(<u64>),
+        real => Token::Real(<f32>),
+        string => Token::String(<Symbol>)
+    }
 }
 
-pub TopLevel: Program = "OPENQASM 2.0" ";" <decls:Span<Decl>*> => Program { decls };
+pub(crate) TopLevel: Program = "OPENQASM 2.0" ";" <decls:Span<Decl>*> => Program { decls };
 
-pub Included: Program = ("OPENQASM 2.0" ";")? <decls:Span<Decl>*> => Program { decls };
+pub(crate) Included: Program = ("OPENQASM 2.0" ";")? <decls:Span<Decl>*> => Program { decls };
 
 Decl: Decl = {
     "include" <filename:Span<String>> ";" => Decl::Include { file: filename },
@@ -70,27 +113,10 @@ Reg: Reg = {
     <name:Ident> "[" <index:Int> "]" => Reg { name, index: Some(index) }
 };
 
-Ident: Symbol = <identifier> => Symbol::new(<>);
-Int: usize = <left:@L> <integer:integer> <right:@R> =>? {
-    integer.parse()
-        .map_err(|_| lalrpop_util::ParseError::User { error: (
-            "Couldn't parse integer", "This could not be parsed, perhaps it is too large.",
-            FileSpan { start: left, end: right, file }
-        ) })
-};
-Real: f32 = <left:@L> <real:real> <right:@R> =>? {
-    real.parse()
-        .map_err(|_| lalrpop_util::ParseError::User { error: (
-            "Couldn't parse real", "This could not be parsed, perhaps it is too large.",
-            FileSpan { start: left, end: right, file }
-        ) })
-};
-String: Symbol = <string> => {
-    Symbol::new((<>).strip_prefix('"')
-        .unwrap_or("")
-        .strip_suffix('"')
-        .unwrap_or(""))
-};
+Ident: Symbol = <identifier>;
+Int: u64 = <integer>;
+Real: f32 = <real>;
+String: Symbol = <string>;
 
 MaybeList<T>: Vec<T> = {
     => Vec::new(),
@@ -107,46 +133,3 @@ Sep<U, V>: Vec<U> = {
         init
     }
 };
-
-match {
-    r"//[^\n\r]*[\n\r]*" => { },
-    r"\s*" => { },
-    "OPENQASM 2.0" => "OPENQASM 2.0",
-    "include" => "include",
-    "qreg" => "qreg",
-    "creg" => "creg",
-    "gate" => "gate",
-    "opaque" => "opaque",
-    "measure" => "measure",
-    "reset" => "reset",
-    "barrier" => "barrier",
-    "if" => "if",
-    "(" => "(",
-    ")" => ")",
-    "{" => "{",
-    "}" => "}",
-    "==" => "==",
-    ";" => ";",
-    "," => ",",
-    "U" => "U",
-    "CX" => "CX",
-    "pi" => "pi",
-    "sin" => "sin",
-    "cos" => "cos",
-    "tan" => "tan",
-    "exp" => "exp",
-    "ln" => "ln",
-    "sqrt" => "sqrt",
-    "^" => "^",
-    "*" => "*",
-    "/" => "/",
-    "+" => "+",
-    "-" => "-",
-    "[" => "[",
-    "]" => "]",
-    "->" => "->",
-    r"[a-zA-Z_][a-zA-Z0-9_]*" => identifier,
-    r"[0-9]+" => integer,
-    r"[0-9]+\.[0-9]+" => real,
-    r#""[^"]*""# => string
-}

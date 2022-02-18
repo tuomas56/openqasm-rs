@@ -43,8 +43,8 @@ impl Program {
 
 #[derive(Debug, Clone, Copy)]
 enum RegType {
-    Classical(usize),
-    Quantum(usize),
+    Classical(u64),
+    Quantum(u64),
 }
 
 struct TypeChecker<'a> {
@@ -423,8 +423,8 @@ impl<'a> FuncTypeChecker<'a> {
 
     fn assert_scalar_size(
         &mut self,
-        val: &Span<usize>,
-        size: Option<usize>,
+        val: &Span<u64>,
+        size: Option<u64>,
         reg: &Span<Reg>,
         stmt: &Span<Stmt>,
     ) {
@@ -433,16 +433,16 @@ impl<'a> FuncTypeChecker<'a> {
                 // Get the size of the comparison value.
                 // What we really want is like val.log2() + 1,
                 // but integer log is unstable at the minute.
-                let bsize =
-                    val.inner
-                        .checked_next_power_of_two()
-                        .map_or(usize::BITS, |v| v.trailing_zeros()) as usize;
+                let bsize = val
+                    .inner
+                    .checked_next_power_of_two()
+                    .map_or(usize::BITS, |v| v.trailing_zeros());
                 self.err::<()>(TypeError::InvalidComparisonSize {
                     reg: reg.span,
                     value: val.span,
                     stmt: stmt.span,
                     reg_size: size,
-                    value_size: bsize,
+                    value_size: bsize as u64,
                 });
             }
         }
@@ -494,7 +494,7 @@ impl<'a> FuncTypeChecker<'a> {
 
     fn assert_match<'b, I>(&mut self, iter: I, stmt: &Span<Stmt>)
     where
-        I: IntoIterator<Item = (Option<usize>, &'b Span<Reg>)>,
+        I: IntoIterator<Item = (Option<u64>, &'b Span<Reg>)>,
     {
         // The size and span corresponding to the
         // previously matched argument.
@@ -527,7 +527,7 @@ impl<'a> FuncTypeChecker<'a> {
         }
     }
 
-    fn assert_reg(&mut self, reg: &Span<Reg>, stmt: &Span<Stmt>, classical: bool) -> Option<usize> {
+    fn assert_reg(&mut self, reg: &Span<Reg>, stmt: &Span<Stmt>, classical: bool) -> Option<u64> {
         // Get the size of a register:
         let map_qubit = |rty: RegType| {
             if classical {
@@ -661,9 +661,9 @@ pub enum TypeError {
         value: FileSpan,
         stmt: FileSpan,
         /// The size of the register.
-        reg_size: usize,
+        reg_size: u64,
         /// The size of the constant value.
-        value_size: usize,
+        value_size: u64,
     },
     /// This statement has the wrong number of arguments.
     #[error("incorrect argument arity")]
@@ -697,20 +697,20 @@ pub enum TypeError {
         /// Reference to this operand.
         span: FileSpan,
         /// The size of this operand.
-        size: usize,
+        size: u64,
         /// Reference to the operand it needs to match.
         match_span: FileSpan,
         /// The size of the operand it should match.
-        match_size: usize,
+        match_size: u64,
     },
     /// This index is invalid for this register.
     #[error("invalid register index")]
     InvalidRegisterIndex {
         name: Symbol,
         /// The index being accessed.
-        index: usize,
+        index: u64,
         /// The size of the register.
-        size: usize,
+        size: u64,
         reg: FileSpan,
         def: FileSpan,
         stmt: FileSpan,

@@ -76,7 +76,7 @@ pub enum Stmt {
     /// Perform an action conditional on a classical register value.
     Conditional {
         reg: Span<Reg>,
-        val: Span<usize>,
+        val: Span<u64>,
         then: Span<Stmt>,
     },
 }
@@ -90,7 +90,7 @@ pub enum Expr {
     /// An arbitrary real number.
     Real(f32),
     /// An integer.
-    Int(usize),
+    Int(u64),
     /// A defined parameter.
     Var(Symbol),
     /// The addition of two expressions.
@@ -129,7 +129,7 @@ pub struct Reg {
     /// `None` represents the whole register.
     /// In definitions, this represents the size
     /// of the register, and `None` means size one.
-    pub index: Option<usize>,
+    pub index: Option<u64>,
 }
 
 /// An object with an attached span.

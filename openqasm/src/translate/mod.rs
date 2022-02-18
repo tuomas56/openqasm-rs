@@ -242,7 +242,7 @@ pub trait ProgramVisitor {
     fn visit_conditional(
         &mut self,
         reg: &Span<Reg>,
-        val: &Span<usize>,
+        val: &Span<u64>,
         then: &Span<Stmt>,
     ) -> Result<(), Self::Error> {
         self.walk_conditional(reg, val, then)
@@ -251,7 +251,7 @@ pub trait ProgramVisitor {
     fn walk_conditional(
         &mut self,
         reg: &Span<Reg>,
-        val: &Span<usize>,
+        val: &Span<u64>,
         then: &Span<Stmt>,
     ) -> Result<(), Self::Error> {
         self.visit_stmt(then)
@@ -274,14 +274,14 @@ pub trait ProgramVisitor {
 /// struct MaxFinder;
 ///
 /// impl ExprVisitor for MaxFinder {
-///     type Output = usize;
+///     type Output = u64;
 ///
-///     fn binop(&mut self, _: Binop, a: usize, b: usize) -> usize { a.max(b) }
-///     fn unop(&mut self, _: Unop, a: usize) -> usize { a }
-///     fn lookup(&mut self, _: &Symbol) -> usize { 0 }
-///     fn pi(&mut self) -> usize { 0 }
-///     fn int(&mut self, val: usize) -> usize { val }
-///     fn real(&mut self, val: f32) -> usize { 0 }
+///     fn binop(&mut self, _: Binop, a: u64, b: u64) -> u64 { a.max(b) }
+///     fn unop(&mut self, _: Unop, a: u64) -> u64 { a }
+///     fn lookup(&mut self, _: &Symbol) -> u64 { 0 }
+///     fn pi(&mut self) -> u64 { 0 }
+///     fn int(&mut self, val: u64) -> u64 { val }
+///     fn real(&mut self, val: f32) -> u64 { 0 }
 /// }
 ///
 /// fn main() {
@@ -296,7 +296,7 @@ pub trait ExprVisitor {
     fn unop(&mut self, op: Unop, a: Self::Output) -> Self::Output;
     fn lookup(&mut self, var: &Symbol) -> Self::Output;
     fn pi(&mut self) -> Self::Output;
-    fn int(&mut self, val: usize) -> Self::Output;
+    fn int(&mut self, val: u64) -> Self::Output;
     fn real(&mut self, val: f32) -> Self::Output;
 
     fn visit_expr(&mut self, expr: &Span<Expr>) -> Self::Output {
@@ -360,7 +360,7 @@ impl<'a> ExprVisitor for FrameEvaluator<'a> {
         Ok(Value::PI)
     }
 
-    fn int(&mut self, val: usize) -> Self::Output {
+    fn int(&mut self, val: u64) -> Self::Output {
         Ok(Value::int(val as i64))
     }
 
@@ -401,8 +401,8 @@ struct Frame {
     name: Symbol,
     def_name: Symbol,
     call: Option<FileSpan>,
-    qregs: HashMap<Symbol, (usize, usize)>,
-    cregs: HashMap<Symbol, (usize, usize)>,
+    qregs: HashMap<Symbol, (u64, u64)>,
+    cregs: HashMap<Symbol, (u64, u64)>,
     params: HashMap<Symbol, Value>,
 }
 
@@ -431,7 +431,7 @@ struct Definition {
 /// struct GatePrinter;
 ///
 /// impl GateWriter for GatePrinter {
-///     fn initialize(&mut self, _: usize, _: usize) {}
+///     fn initialize(&mut self, _: &[Symbol], _: &[Symbol]) {}
 ///
 ///     fn write_cx(&mut self, copy: usize, xor: usize) {
 ///         println!("cx {copy} {xor}");
@@ -472,8 +472,8 @@ struct Definition {
 /// }
 /// ```
 pub struct Linearize<T> {
-    next_qid: usize,
-    next_cid: usize,
+    next_qid: u64,
+    next_cid: u64,
     defs: HashMap<Symbol, Rc<Definition>>,
     stack: Vec<Frame>,
     frame: Frame,
@@ -502,7 +502,7 @@ pub trait GateWriter: Sized {
     fn write_barrier(&mut self, regs: &[usize]);
     fn write_measure(&mut self, from: usize, to: usize);
     fn write_reset(&mut self, reg: usize);
-    fn start_conditional(&mut self, reg: usize, count: usize, val: usize);
+    fn start_conditional(&mut self, reg: usize, count: usize, val: u64);
     fn end_conditional(&mut self);
 }
 
@@ -566,7 +566,7 @@ impl<T> Linearize<T> {
     // The qubit number corresponds to the base of this reference,
     // and the remaining qubits in the register are the next
     // consecutive size bits.
-    fn resolve_qreg(&self, reg: &Reg) -> (usize, usize) {
+    fn resolve_qreg(&self, reg: &Reg) -> (u64, u64) {
         match reg.index {
             None => self.frame.qregs[&reg.name],
             Some(idx) => {
@@ -576,7 +576,7 @@ impl<T> Linearize<T> {
         }
     }
 
-    fn resolve_creg(&self, reg: &Reg) -> (usize, usize) {
+    fn resolve_creg(&self, reg: &Reg) -> (u64, u64) {
         match reg.index {
             None => self.frame.cregs[&reg.name],
             Some(idx) => {
@@ -655,20 +655,20 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // Since this is first called after all register declarations,
         // now is a good time to initialize the backend.
         if !self.initialized {
-            let mut qubits = vec![Symbol::new(""); self.next_qid];
-            let mut bits = vec![Symbol::new(""); self.next_cid];
+            let mut qubits = vec![Symbol::new(""); self.next_qid as usize];
+            let mut bits = vec![Symbol::new(""); self.next_cid as usize];
 
             for (name, (base, size)) in &self.frame.qregs {
                 for offset in 0..*size {
                     let n = Symbol::new(format!("{name}[{offset}]"));
-                    qubits[*base + offset] = n;
+                    qubits[(*base + offset) as usize] = n;
                 }
             }
 
             for (name, (base, size)) in &self.frame.cregs {
                 for offset in 0..*size {
                     let n = Symbol::new(format!("{name}[{offset}]"));
-                    bits[*base + offset] = n;
+                    bits[(*base + offset) as usize] = n;
                 }
             }
 
@@ -686,7 +686,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         for reg in regs {
             let (base, size) = self.resolve_qreg(reg);
             for offset in 0..size {
-                args.insert(base + offset);
+                args.insert((base + offset) as usize);
             }
         }
 
@@ -703,17 +703,20 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         if fsize == tsize {
             // Many - many
             for offset in 0..fsize {
-                self.writer.write_measure(fbase + offset, tbase + offset);
+                self.writer
+                    .write_measure((fbase + offset) as usize, (tbase + offset) as usize);
             }
         } else if fsize == 1 {
             // One - many
             for offset in 0..tsize {
-                self.writer.write_measure(fbase, tbase + offset);
+                self.writer
+                    .write_measure(fbase as usize, (tbase + offset) as usize);
             }
         } else {
             // Many - one
             for offset in 0..fsize {
-                self.writer.write_measure(fbase + offset, tbase);
+                self.writer
+                    .write_measure((fbase + offset) as usize, tbase as usize);
             }
         }
 
@@ -723,7 +726,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
     fn visit_reset(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
         let (base, size) = self.resolve_qreg(reg);
         for offset in 0..size {
-            self.writer.write_reset(base + offset);
+            self.writer.write_reset((base + offset) as usize);
         }
 
         Ok(())
@@ -737,18 +740,36 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // distinct as the CX of two identical gates is not well defined.
         if csize == xsize {
             for offset in 0..csize {
-                self.assert_different(cbase + offset, xbase + offset, copy.span, xor.span)?;
-                self.writer.write_cx(cbase + offset, xbase + offset);
+                self.assert_different(
+                    (cbase + offset) as usize,
+                    (xbase + offset) as usize,
+                    copy.span,
+                    xor.span,
+                )?;
+                self.writer
+                    .write_cx((cbase + offset) as usize, (xbase + offset) as usize);
             }
         } else if csize == 1 {
             for offset in 0..xsize {
-                self.assert_different(cbase, xbase + offset, copy.span, xor.span)?;
-                self.writer.write_cx(cbase, xbase + offset);
+                self.assert_different(
+                    cbase as usize,
+                    (xbase + offset) as usize,
+                    copy.span,
+                    xor.span,
+                )?;
+                self.writer
+                    .write_cx(cbase as usize, (xbase + offset) as usize);
             }
         } else {
             for offset in 0..csize {
-                self.assert_different(cbase + offset, xbase, copy.span, xor.span)?;
-                self.writer.write_cx(cbase + offset, xbase);
+                self.assert_different(
+                    (cbase + offset) as usize,
+                    xbase as usize,
+                    copy.span,
+                    xor.span,
+                )?;
+                self.writer
+                    .write_cx((cbase + offset) as usize, xbase as usize);
             }
         }
 
@@ -794,7 +815,8 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // Now do a unitary for each referenced qubit.
         let (base, size) = self.resolve_qreg(reg);
         for offset in 0..size {
-            self.writer.write_u(theta, phi, lambda, base + offset);
+            self.writer
+                .write_u(theta, phi, lambda, (base + offset) as usize);
         }
 
         Ok(())
@@ -858,7 +880,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // Record the base addresses of all registers.
         let mut argsn = args
             .iter()
-            .map(|a| self.resolve_qreg(a).0)
+            .map(|a| self.resolve_qreg(a).0 as usize)
             .collect::<Vec<_>>();
 
         if def.gates.is_some() {
@@ -881,7 +903,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                     // This gate has a body, so process it. First insert
                     // all of the arguments as quantum registers of size one.
                     for (name, arg) in def.args.iter().zip(&argsn) {
-                        self.frame.qregs.insert(name.clone(), (*arg, 1));
+                        self.frame.qregs.insert(name.clone(), (*arg as u64, 1));
                     }
 
                     // Then recurse on the body.
@@ -914,11 +936,12 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
     fn visit_conditional(
         &mut self,
         reg: &Span<Reg>,
-        val: &Span<usize>,
+        val: &Span<u64>,
         then: &Span<Stmt>,
     ) -> Result<(), Self::Error> {
         let (base, size) = self.frame.qregs[&reg.name];
-        self.writer.start_conditional(base, size, **val);
+        self.writer
+            .start_conditional(base as usize, size as usize, **val);
         self.visit_stmt(then)?;
         self.writer.end_conditional();
         Ok(())

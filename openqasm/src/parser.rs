@@ -1,4 +1,5 @@
 use crate::ast::{Decl, FileSpan, Program};
+use logos::Logos;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -9,11 +10,143 @@ use {
     ariadne::{Label, ReportKind, Source},
 };
 
-lalrpop_mod!(
-    #[allow(clippy::all)]
-    parser_impl,
-    "/grammar.rs"
-);
+mod generated {
+    use crate::ast::Symbol;
+    use logos::Logos;
+
+    lalrpop_mod!(
+        #[allow(clippy::all)]
+        pub parser_impl,
+        "/grammar.rs"
+    );
+
+    #[derive(Logos, Debug, PartialEq, Clone)]
+    pub enum Token {
+        #[token("OPENQASM 2.0")]
+        OPENQASM,
+
+        #[token("include")]
+        Include,
+
+        #[token("qreg")]
+        QReg,
+
+        #[token("creg")]
+        CReg,
+
+        #[token("gate")]
+        Gate,
+
+        #[token("opaque")]
+        Opaque,
+
+        #[token("measure")]
+        Measure,
+
+        #[token("reset")]
+        Reset,
+
+        #[token("barrier")]
+        Barrier,
+
+        #[token("if")]
+        If,
+
+        #[token("(")]
+        LParen,
+
+        #[token(")")]
+        RParen,
+
+        #[token("{")]
+        LBrace,
+
+        #[token("}")]
+        RBrace,
+
+        #[token("==")]
+        Equals,
+
+        #[token(";")]
+        Semicolon,
+
+        #[token(",")]
+        Comma,
+
+        #[token("U")]
+        U,
+
+        #[token("CX")]
+        CX,
+
+        #[token("pi")]
+        Pi,
+
+        #[token("sin")]
+        Sin,
+
+        #[token("cos")]
+        Cos,
+
+        #[token("tan")]
+        Tan,
+
+        #[token("exp")]
+        Exp,
+
+        #[token("ln")]
+        Ln,
+
+        #[token("sqrt")]
+        Sqrt,
+
+        #[token("^")]
+        Pow,
+
+        #[token("*")]
+        Mul,
+
+        #[token("/")]
+        Div,
+
+        #[token("+")]
+        Add,
+
+        #[token("-")]
+        Sub,
+
+        #[token("[")]
+        LBracket,
+
+        #[token("]")]
+        RBracket,
+
+        #[token("->")]
+        Arrow,
+
+        #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |tok| {
+            Symbol::new(tok.slice())
+        })]
+        Identifier(Symbol),
+
+        #[regex(r"[0-9]+", |tok| tok.slice().parse())]
+        Integer(u64),
+
+        #[regex(r"[0-9]+\.[0-9]+", |tok| tok.slice().parse())]
+        Real(f32),
+
+        #[regex(r#""[^"]*""#, |tok| {
+            let slice = tok.slice();
+            Symbol::new(&slice[1..slice.len()-1])
+        })]
+        String(Symbol),
+
+        #[error]
+        #[regex(r"[ \t\n\f]+", logos::skip)]
+        #[regex(r"//[^\n\r]*[\n\r]*", logos::skip)]
+        Error,
+    }
+}
 
 /// A cache for source strings and files.
 ///
@@ -287,7 +420,7 @@ impl<'a> Parser<'a> {
     /// this as the file name.
     pub fn parse_source<P: AsRef<Path>>(&mut self, source: String, path: Option<P>) {
         let id = self.cache.add_source(source, path);
-        self.parse_prog(id, true);
+        self.parse_prog(id, false);
     }
 
     /// Stop the parser and return any errors encountered or the parsed AST.
@@ -382,33 +515,37 @@ impl<'a> Parser<'a> {
             return;
         }
 
+        let lexer = generated::Token::lexer(&self.cache.strings[&id])
+            .spanned()
+            .map(|(tok, span)| match tok {
+                generated::Token::Error => Err(FileSpan {
+                    start: span.start,
+                    end: span.end,
+                    file: id,
+                }),
+                _ => Ok((span.start, tok, span.end)),
+            });
+
         let parse = if toplevel {
             // If we are at the top level file, then we would expect to have
             // a "OPENQASM 2.0" signature at the top,
-            parser_impl::TopLevelParser::new().parse(id, &self.cache.strings[&id])
+            generated::parser_impl::TopLevelParser::new().parse(id, lexer)
         } else {
             // but if this is an included file it may not be there,
             // so use a different parser.
-            parser_impl::IncludedParser::new().parse(id, &self.cache.strings[&id])
+            generated::parser_impl::IncludedParser::new().parse(id, lexer)
         };
 
         let res = parse.map_err(|e| {
             use lalrpop_util::ParseError as PE;
             match e {
-                // An error occurred while parsing an integer or real.
-                PE::User {
-                    error: (reason, label, span),
-                } => ParseError::InvalidNumeric {
-                    reason,
-                    label,
-                    span,
-                },
+                PE::User { error: span } => ParseError::InvalidToken { span },
                 // We got extra tokens after what was supposed to be EOF.
                 // I don't think this ever occurs.
                 PE::ExtraToken {
                     token: (start, tok, end),
                 } => ParseError::UnexpectedToken {
-                    token: tok.1.to_string(),
+                    token: format!("{tok:?}"),
                     expected: Vec::new(),
                     span: FileSpan {
                         start,
@@ -439,7 +576,7 @@ impl<'a> Parser<'a> {
                     expected,
                 } => ParseError::UnexpectedToken {
                     expected,
-                    token: tok.1.to_string(),
+                    token: format!("{tok:?}"),
                     span: FileSpan {
                         start,
                         end,
@@ -532,13 +669,6 @@ pub enum ParseError {
     #[error("unexpected eof")]
     UnexpectedEOF {
         expected: Vec<String>,
-        span: FileSpan,
-    },
-    /// Something went wrong while parsing an integer or real.
-    #[error("numeric parsing error")]
-    InvalidNumeric {
-        reason: &'static str,
-        label: &'static str,
         span: FileSpan,
     },
 }
@@ -646,18 +776,6 @@ impl ParseError {
                     )
                     .finish()
             }
-            ParseError::InvalidNumeric {
-                span,
-                reason,
-                label,
-            } => Report::build(ReportKind::Error, span.file, 0)
-                .with_message(reason)
-                .with_label(
-                    Label::new(*span)
-                        .with_message(label)
-                        .with_color(ariadne::Color::Cyan),
-                )
-                .finish(),
         }
     }
 }
