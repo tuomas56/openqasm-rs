@@ -229,6 +229,6 @@ where
     }
 }
 
-pub use ast::{Decl, Expr, Program, Reg, Span, Stmt};
+pub use ast::{Decl, Expr, Program, Reg, Span, Stmt, Symbol};
 pub use parser::{Parser, SourceCache};
-pub use translate::{ExprVisitor, GateWriter, Linearize, ProgramVisitor};
+pub use translate::{ExprVisitor, GateWriter, Linearize, ProgramVisitor, Value};

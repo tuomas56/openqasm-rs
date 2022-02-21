@@ -420,7 +420,9 @@ struct Definition {
 ///
 /// This can be used by constructing one with `Linearize::new`
 /// with your chosen `GateWriter`, and then using the `ProgramVisitor`
-/// impl to call `.visit_program` on your program.
+/// impl to call `.visit_program` on your program. The `depth` argument
+/// to `Linearize::new` determines how many layers of definitions
+/// it will expand.
 ///
 /// Note that it is assumed you have type-checked your program first.
 /// If you haven't you may get garbage output / random panics. If
@@ -431,49 +433,63 @@ struct Definition {
 /// struct GatePrinter;
 ///
 /// impl GateWriter for GatePrinter {
-///     fn initialize(&mut self, _: &[Symbol], _: &[Symbol]) {}
+///     type Error = std::convert::Infallible;
+/// 
+///     fn initialize(&mut self, _: &[Symbol], _: &[Symbol]) -> Result<(), Self::Error> {
+///         Ok(())
+///     }
 ///
-///     fn write_cx(&mut self, copy: usize, xor: usize) {
+///     fn write_cx(&mut self, copy: usize, xor: usize) -> Result<(), Self::Error> {
 ///         println!("cx {copy} {xor}");
+///         Ok(())
 ///     }
 ///
-///     fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize) {
+///     fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize) -> Result<(), Self::Error> {
 ///         println!("u({theta}, {phi}, {lambda}) {reg}");
+///         Ok(())
 ///     }
 ///
-///     fn write_opaque(&mut self, name: &Symbol, _: &[Value], _: &[usize]) {
-///         println!("opaque gate {}", name)
+///     fn write_opaque(&mut self, name: &Symbol, _: &[Value], _: &[usize]) -> Result<(), Self::Error> {
+///         println!("opaque gate {}", name);
+///         Ok(())
 ///     }
 ///
-///     fn write_barrier(&mut self, _: &[usize]) {}
+///     fn write_barrier(&mut self, _: &[usize]) -> Result<(), Self::Error> {
+///         Ok(())
+///     }
 ///
-///     fn write_measure(&mut self, from: usize, to: usize) {
+///     fn write_measure(&mut self, from: usize, to: usize) -> Result<(), Self::Error> {
 ///         println!("measure {} -> {}", from, to);
+///         Ok(())
 ///     }
 ///
-///     fn write_reset(&mut self, reg: usize) {
+///     fn write_reset(&mut self, reg: usize) -> Result<(), Self::Error> {
 ///         println!("reset {reg}");
+///         Ok(())
 ///     }
 ///
-///     fn start_conditional(&mut self, reg: usize, count: usize, value: usize) {
+///     fn start_conditional(&mut self, reg: usize, count: usize, value: usize) -> Result<(), Self::Error> {
 ///         println!("if ({reg}:{count} == {value}) {{");
+///         Ok(())
 ///     }
 ///
-///     fn end_conditional(&mut self) {
+///     fn end_conditional(&mut self) -> Result<(), Self::Error> {
 ///         println!("}}");
+///         Ok(())
 ///     }
 /// }
 ///
 /// fn main() {
 ///     let program = ...; // acquire a program from somewhere.
 ///     program.type_check().unwrap(); // make sure to type check.
-///     let mut l = Linearize::new(GatePrinter);
+///     let mut l = Linearize::new(GatePrinter, usize::MAX);
 ///     l.visit_program(&program).unwrap();
 /// }
 /// ```
 pub struct Linearize<T> {
     next_qid: u64,
     next_cid: u64,
+    depth: usize,
     defs: HashMap<Symbol, Rc<Definition>>,
     stack: Vec<Frame>,
     frame: Frame,
@@ -495,22 +511,25 @@ pub struct Linearize<T> {
 /// is called before and after any statements that are intended
 /// to be conditional on a classical value.
 pub trait GateWriter: Sized {
-    fn initialize(&mut self, qubits: &[Symbol], bits: &[Symbol]);
-    fn write_cx(&mut self, copy: usize, xor: usize);
-    fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize);
-    fn write_opaque(&mut self, name: &Symbol, params: &[Value], args: &[usize]);
-    fn write_barrier(&mut self, regs: &[usize]);
-    fn write_measure(&mut self, from: usize, to: usize);
-    fn write_reset(&mut self, reg: usize);
-    fn start_conditional(&mut self, reg: usize, count: usize, val: u64);
-    fn end_conditional(&mut self);
+    type Error: std::error::Error + 'static;
+
+    fn initialize(&mut self, qubits: &[Symbol], bits: &[Symbol]) -> Result<(), Self::Error>;
+    fn write_cx(&mut self, copy: usize, xor: usize) -> Result<(), Self::Error>;
+    fn write_u(&mut self, theta: Value, phi: Value, lambda: Value, reg: usize) -> Result<(), Self::Error>;
+    fn write_opaque(&mut self, name: &Symbol, params: &[Value], args: &[usize]) -> Result<(), Self::Error>;
+    fn write_barrier(&mut self, regs: &[usize]) -> Result<(), Self::Error>;
+    fn write_measure(&mut self, from: usize, to: usize) -> Result<(), Self::Error>;
+    fn write_reset(&mut self, reg: usize) -> Result<(), Self::Error>;
+    fn start_conditional(&mut self, reg: usize, count: usize, val: u64) -> Result<(), Self::Error>;
+    fn end_conditional(&mut self) -> Result<(), Self::Error>;
 }
 
-impl<T> Linearize<T> {
-    pub fn new(writer: T) -> Linearize<T> {
+impl<T: GateWriter> Linearize<T> {
+    pub fn new(writer: T, depth: usize) -> Linearize<T> {
         Linearize {
             next_qid: 0,
             next_cid: 0,
+            depth,
             defs: HashMap::new(),
             stack: Vec::new(),
             frame: Frame {
@@ -672,7 +691,13 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                 }
             }
 
-            self.writer.initialize(&qubits, &bits);
+            let err = self.writer.initialize(&qubits, &bits).map_err(|error| {
+                LinearizeErrorKind::WriterError {
+                    error: Box::new(error)
+                }
+            });
+            self.err(err)?;
+
             self.initialized = true;
         }
 
@@ -691,7 +716,12 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         }
 
         let args = args.drain().collect::<Vec<_>>();
-        self.writer.write_barrier(&args);
+        let err = self.writer.write_barrier(&args).map_err(|error| {
+            LinearizeErrorKind::WriterError {
+                error: Box::new(error)
+            }
+        });
+        self.err(err)?;
 
         Ok(())
     }
@@ -703,20 +733,38 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         if fsize == tsize {
             // Many - many
             for offset in 0..fsize {
-                self.writer
-                    .write_measure((fbase + offset) as usize, (tbase + offset) as usize);
+                let err = self.writer
+                    .write_measure((fbase + offset) as usize, (tbase + offset) as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         } else if fsize == 1 {
             // One - many
             for offset in 0..tsize {
-                self.writer
-                    .write_measure(fbase as usize, (tbase + offset) as usize);
+                let err = self.writer
+                    .write_measure(fbase as usize, (tbase + offset) as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         } else {
             // Many - one
             for offset in 0..fsize {
-                self.writer
-                    .write_measure((fbase + offset) as usize, tbase as usize);
+                let err = self.writer
+                    .write_measure((fbase + offset) as usize, tbase as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         }
 
@@ -726,7 +774,13 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
     fn visit_reset(&mut self, reg: &Span<Reg>) -> Result<(), Self::Error> {
         let (base, size) = self.resolve_qreg(reg);
         for offset in 0..size {
-            self.writer.write_reset((base + offset) as usize);
+            let err = self.writer.write_reset((base + offset) as usize)
+            .map_err(|error| {
+                LinearizeErrorKind::WriterError {
+                    error: Box::new(error)
+                }
+            });
+            self.err(err)?;
         }
 
         Ok(())
@@ -746,8 +800,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                     copy.span,
                     xor.span,
                 )?;
-                self.writer
-                    .write_cx((cbase + offset) as usize, (xbase + offset) as usize);
+                let err = self.writer
+                    .write_cx((cbase + offset) as usize, (xbase + offset) as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         } else if csize == 1 {
             for offset in 0..xsize {
@@ -757,8 +817,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                     copy.span,
                     xor.span,
                 )?;
-                self.writer
-                    .write_cx(cbase as usize, (xbase + offset) as usize);
+                let err = self.writer
+                    .write_cx(cbase as usize, (xbase + offset) as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         } else {
             for offset in 0..csize {
@@ -768,8 +834,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                     copy.span,
                     xor.span,
                 )?;
-                self.writer
-                    .write_cx((cbase + offset) as usize, xbase as usize);
+                let err = self.writer
+                    .write_cx((cbase + offset) as usize, xbase as usize)
+                    .map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                self.err(err)?;
             }
         }
 
@@ -815,8 +887,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // Now do a unitary for each referenced qubit.
         let (base, size) = self.resolve_qreg(reg);
         for offset in 0..size {
-            self.writer
-                .write_u(theta, phi, lambda, (base + offset) as usize);
+            let err = self.writer
+                .write_u(theta, phi, lambda, (base + offset) as usize)
+                .map_err(|error| {
+                    LinearizeErrorKind::WriterError {
+                        error: Box::new(error)
+                    }
+                });
+            self.err(err)?;
         }
 
         Ok(())
@@ -899,7 +977,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
             }
 
             match &def.gates {
-                Some(gates) => {
+                Some(gates) if self.stack.len() < self.depth => {
                     // This gate has a body, so process it. First insert
                     // all of the arguments as quantum registers of size one.
                     for (name, arg) in def.args.iter().zip(&argsn) {
@@ -911,9 +989,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
                         self.visit_stmt(stmt)?;
                     }
                 }
-                None => {
-                    // If this is opaque, write it out straight away.
-                    self.writer.write_opaque(name, &values, &argsn);
+                _ => {
+                    // If this is opaque (or we passed the depth limit), write it out straight away.
+                    let err = self.writer.write_opaque(name, &values, &argsn).map_err(|error| {
+                        LinearizeErrorKind::WriterError {
+                            error: Box::new(error)
+                        }
+                    });
+                    self.err(err)?;
                 }
             }
 
@@ -940,10 +1023,20 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         then: &Span<Stmt>,
     ) -> Result<(), Self::Error> {
         let (base, size) = self.frame.qregs[&reg.name];
-        self.writer
-            .start_conditional(base as usize, size as usize, **val);
+        let err =self.writer
+            .start_conditional(base as usize, size as usize, **val).map_err(|error| {
+                LinearizeErrorKind::WriterError {
+                    error: Box::new(error)
+                }
+            });
+        self.err(err)?;
         self.visit_stmt(then)?;
-        self.writer.end_conditional();
+        let err = self.writer.end_conditional().map_err(|error| {
+            LinearizeErrorKind::WriterError {
+                error: Box::new(error)
+            }
+        });
+        self.err(err)?;
         Ok(())
     }
 }
@@ -983,6 +1076,10 @@ pub enum LinearizeErrorKind {
         /// This argument overlaps with the other.
         b: FileSpan,
     },
+    #[error("{error}")]
+    WriterError {
+        error: Box<dyn std::error::Error>
+    }
 }
 
 #[cfg(feature = "ariadne")]
@@ -1026,6 +1123,10 @@ impl LinearizeError {
                         .with_message("This overlaps with the previous reference.")
                         .with_color(ariadne::Color::Cyan)
                         .with_order(1))
+            },
+            LinearizeErrorKind::WriterError { ref error } => {
+                Report::build(ReportKind::Error, 0usize, 0usize)
+                    .with_message(format!("{}", error))
             }
         };
 

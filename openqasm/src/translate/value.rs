@@ -93,7 +93,21 @@ impl Value {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{} + {}π", self.a, self.b)
+        if self.b == Value::RAW_ZERO {
+            write!(f, "{}", self.a)
+        } else if self.a == Value::RAW_ZERO {
+            if *self.b.numer() == 1 {
+                write!(f, "π/{}", self.b.denom())
+            } else {
+                write!(f, "{}π", self.b)
+            }
+        } else {
+            if *self.b.numer() == 1 {
+                write!(f, "{}+π/{}", self.a, self.b.denom())
+            } else {
+                write!(f, "{}+{}π", self.a, self.b)
+            }
+        }
     }
 }
 
