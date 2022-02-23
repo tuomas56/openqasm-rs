@@ -224,7 +224,7 @@ fn make_diagram(path: &str, cache: &mut oq::SourceCache) -> Result<String, oq::E
 
     output = output.replace(
         r#"<svg width="2147483647" height="2147483647" viewBox="0 0 2147483647 2147483647" xmlns="http://www.w3.org/2000/svg">"#,
-        &format!(r#"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">"#)
+        &format!(r#"<svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">"#, width, height, width, height)
     );
 
     Ok(output)

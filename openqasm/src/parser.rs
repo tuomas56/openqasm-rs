@@ -545,7 +545,7 @@ impl<'a> Parser<'a> {
                 PE::ExtraToken {
                     token: (start, tok, end),
                 } => ParseError::UnexpectedToken {
-                    token: format!("{tok:?}"),
+                    token: format!("{:?}", tok),
                     expected: Vec::new(),
                     span: FileSpan {
                         start,
@@ -576,7 +576,7 @@ impl<'a> Parser<'a> {
                     expected,
                 } => ParseError::UnexpectedToken {
                     expected,
-                    token: format!("{tok:?}"),
+                    token: format!("{:?}", tok),
                     span: FileSpan {
                         start,
                         end,
