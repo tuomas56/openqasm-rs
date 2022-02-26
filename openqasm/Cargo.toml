@@ -1,6 +1,6 @@
 [package]
 name = "openqasm"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Tuomas Laakkonen <pigworts2@gmail.com>"]
 description = "Parser and translator for OpenQASM 2.0"
 repository = "https://github.com/tuomas56/openqasm-rs"

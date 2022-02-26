@@ -36,7 +36,7 @@ impl<'a> SVGRenderer<'a> {
     }
 
     fn draw_polyline(&mut self, points: &[(f32, f32)]) {
-        let points: String = points.iter().map(|(x, y)| format!("{x},{y} ")).collect();
+        let points: String = points.iter().map(|(x, y)| format!("{},{} ", x, y)).collect();
 
         self.root.append_child(minidom::Element::builder("polyline", SVG_NS)
             .attr("points", points)
@@ -437,8 +437,8 @@ impl<'a> oq::GateWriter for &mut SVGRenderer<'a> {
             let name = if params.is_empty() {
                 name.to_string()
             } else {
-                format!("{name}({})", params.iter()
-                    .map(|v| format!("{v}"))
+                format!("{}({})", name, params.iter()
+                    .map(|v| format!("{}", v))
                     .collect::<Vec<_>>()
                     .join(", ")
                 )
@@ -451,7 +451,7 @@ impl<'a> oq::GateWriter for &mut SVGRenderer<'a> {
             let mut rmwidth = 0.0;
             for (i, r) in regs.iter().enumerate() {
                 let (_, cy) = self.qubits[*r];
-                let rwidth = self.draw_text(x + width, cy, cy + offset*2.0, &format!("{i}"), "", false, true);
+                let rwidth = self.draw_text(x + width, cy, cy + offset*2.0, &format!("{}", i), "", false, true);
                 rmwidth = rwidth.max(rmwidth);
             }
 
@@ -504,8 +504,8 @@ impl<'a> oq::GateWriter for &mut SVGRenderer<'a> {
                 let name = if params.is_empty() {
                     name.to_string()
                 } else {
-                    format!("{name}({})", params.iter()
-                        .map(|v| format!("{v}"))
+                    format!("{}({})", name, params.iter()
+                        .map(|v| format!("{}", v))
                         .collect::<Vec<_>>()
                         .join(", ")
                     )
@@ -597,7 +597,7 @@ fn draw_diagram(
             .attr("stroke", color)
             .attr("stroke-linejoin", "bevel")
             .attr("font-size", font_size.to_string())
-            .attr("style", format!("font-family: {font_name}, sans-serif;"))
+            .attr("style", format!("font-family: {}, sans-serif;", font_name))
             .build(),
         qubits: Vec::new(),
         bits: Vec::new(),
