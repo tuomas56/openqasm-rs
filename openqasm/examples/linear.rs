@@ -1,5 +1,3 @@
-#![feature(never_type)]
-
 use openqasm as oq;
 use oq::translate::ProgramVisitor;
 use oq::{
