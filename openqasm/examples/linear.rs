@@ -63,7 +63,7 @@ fn example(path: &str, cache: &mut oq::SourceCache) -> Result<(), oq::Errors> {
     let program = parser.done().to_errors()?;
     program.type_check().to_errors()?;
 
-    let mut l = oq::translate::Linearize::new(GatePrinter, usize::MAX);
+    let mut l = oq::translate::Linearize::new(GatePrinter);
     l.visit_program(&program).to_errors()?;
 
     Ok(())

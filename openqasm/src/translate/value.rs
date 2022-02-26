@@ -96,16 +96,26 @@ impl std::fmt::Display for Value {
         if self.b == Value::RAW_ZERO {
             write!(f, "{}", self.a)
         } else if self.a == Value::RAW_ZERO {
-            if *self.b.numer() == 1 {
-                write!(f, "π/{}", self.b.denom())
+            if self.b.numer().abs() == 1 {
+                let sign = if *self.b.numer() < 0 { "-" } else { "" };
+                if *self.b.denom() == 1 {
+                    write!(f, "{}π", sign)
+                } else {
+                    write!(f, "{}π/{}", sign, self.b.denom())
+                }
             } else {
                 write!(f, "{}π", self.b)
             }
         } else {
-            if *self.b.numer() == 1 {
-                write!(f, "{}+π/{}", self.a, self.b.denom())
+            let sign = if *self.b.numer() < 0 { "-" } else { "+" };
+            if self.b.numer().abs() == 1 {
+                if *self.b.denom() == 1 {
+                    write!(f, "{}{}π", self.a, sign)
+                } else {
+                    write!(f, "{}{}π/{}", self.a, sign, self.b.denom())
+                }
             } else {
-                write!(f, "{}+{}π", self.a, self.b)
+                write!(f, "{}{}{}π", self.a, sign, self.b.abs())
             }
         }
     }
