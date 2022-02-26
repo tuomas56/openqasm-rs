@@ -788,14 +788,14 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
 
             for (name, (base, size)) in &self.frame.qregs {
                 for offset in 0..*size {
-                    let n = Symbol::new(format!("{name}[{offset}]"));
+                    let n = Symbol::new(format!("{}[{}]", name, offset));
                     qubits[(*base + offset) as usize] = n;
                 }
             }
 
             for (name, (base, size)) in &self.frame.cregs {
                 for offset in 0..*size {
-                    let n = Symbol::new(format!("{name}[{offset}]"));
+                    let n = Symbol::new(format!("{}[{}]", name, offset));
                     bits[(*base + offset) as usize] = n;
                 }
             }
@@ -1250,18 +1250,18 @@ impl LinearizeError {
         for (i, (name, call)) in self.stack.iter().enumerate().rev() {
             let kind = match i {
                 0 => "Top level frame".to_string(),
-                _ => format!("Frame {i}"),
+                _ => format!("Frame {}", i),
             };
 
             let rest = if name.as_str() == "<toplevel>" {
                 String::new()
             } else {
-                format!(" in `{name}`")
+                format!(" in `{}`", name)
             };
 
             base = base.with_label(
                 Label::new(*call)
-                    .with_message(format!("{kind} originated here{rest}."))
+                    .with_message(format!("{} originated here{}.", kind, rest))
                     .with_color(cols.next()),
             );
         }
