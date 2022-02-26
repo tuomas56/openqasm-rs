@@ -1,4 +1,5 @@
 use crate::ast::{Decl, Expr, FileSpan, Program, Reg, Span, Stmt, Symbol};
+use crate::parser::FileID;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use thiserror::Error;
@@ -407,9 +408,108 @@ struct Frame {
 }
 
 struct Definition {
+    name: Span<Symbol>,
     args: Vec<Symbol>,
     params: Vec<Symbol>,
     gates: Option<Vec<Span<Stmt>>>,
+}
+
+/// An object that dictates which definitions are expanded.
+/// This contains several types of filters that can be
+/// used to customize exactly which definitions `Linearize`
+/// will expand in a program.
+/// 
+/// It contains an allowlist and denylist for both files and
+/// symbols. The allowlist takes priority over denylist,
+/// and file-based permissions take priority over symbol-based.
+/// This means, for example, that you would never set both
+/// a file-based and symbol-based allowlist as the symbol
+/// one would never be used. It also contains a maximum depth 
+/// restriction. That will deny any expansions past a certain depth. 
+/// 
+/// The default value (as constructed by `new`) allows everything.
+#[derive(Clone)]
+pub struct ExpansionPolicy {
+    depth: usize,
+    allow_files: Option<HashSet<usize>>,
+    allow_symbols: Option<HashSet<Symbol>>,
+    deny_files: Option<HashSet<usize>>,
+    deny_symbols: Option<HashSet<Symbol>>
+}
+
+impl ExpansionPolicy {
+    /// Create a new `ExpansionPolicy` allowing everything.
+    pub fn new() -> ExpansionPolicy {
+        ExpansionPolicy {
+            depth: usize::MAX,
+            allow_files: None,
+            allow_symbols: None,
+            deny_files: None,
+            deny_symbols: None
+        }
+    }
+
+    /// Permit only expansions up to this depth.
+    pub fn depth(mut self, depth: usize) -> ExpansionPolicy {
+        self.depth = depth;
+        self
+    }
+
+    /// Deny any definition in this file from being expanded.
+    pub fn deny_file(mut self, file: FileID) -> ExpansionPolicy {
+        self.deny_files.get_or_insert_with(HashSet::new)
+            .insert(file.0);
+        self
+    }
+
+    /// Deny this defintion from being expanded.
+    pub fn deny_symbol(mut self, symbol: Symbol) -> ExpansionPolicy {
+        self.deny_symbols.get_or_insert_with(HashSet::new)
+            .insert(symbol);
+        self
+    }
+
+    /// Allow only definitions in this file (and other allowed files) to be expanded.
+    pub fn allow_file(mut self, file: FileID) -> ExpansionPolicy {
+        self.allow_files.get_or_insert_with(HashSet::new)
+            .insert(file.0);
+        self
+    }
+
+    /// Allow only this definitions (and other allowed definitions) to be expanded.
+    pub fn allow_symbol(mut self, symbol: Symbol) -> ExpansionPolicy {
+        self.allow_symbols.get_or_insert_with(HashSet::new)
+            .insert(symbol);
+        self
+    }
+
+    fn permitted(&self, depth: usize, symbol: &Span<Symbol>) -> bool {
+        if depth >= self.depth {
+            return false;
+        }
+
+        if let Some(allow_files) = self.allow_files.as_ref() {
+            return allow_files.contains(&symbol.span.file);
+        }
+
+        if let Some(allow_symbols) = self.allow_symbols.as_ref() {
+            return allow_symbols.contains(&symbol);
+        }
+
+        if let Some(deny_files) = self.deny_files.as_ref() {
+            if deny_files.contains(&symbol.span.file) {
+                return false;
+            }
+        }
+
+        if let Some(deny_symbols) = self.deny_symbols.as_ref() {
+            if deny_symbols.contains(&symbol) {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 /// High-level translation interface.
@@ -420,9 +520,11 @@ struct Definition {
 ///
 /// This can be used by constructing one with `Linearize::new`
 /// with your chosen `GateWriter`, and then using the `ProgramVisitor`
-/// impl to call `.visit_program` on your program. The `depth` argument
-/// to `Linearize::new` determines how many layers of definitions
-/// it will expand.
+/// impl to call `.visit_program` on your program. 
+/// 
+/// You change the exactly which definitions will be expanded
+/// by using the `with_policy` method to set an `ExpansionPolicy`.
+/// The default is set to expand all definitions.
 ///
 /// Note that it is assumed you have type-checked your program first.
 /// If you haven't you may get garbage output / random panics. If
@@ -482,14 +584,14 @@ struct Definition {
 /// fn main() {
 ///     let program = ...; // acquire a program from somewhere.
 ///     program.type_check().unwrap(); // make sure to type check.
-///     let mut l = Linearize::new(GatePrinter, usize::MAX);
+///     let mut l = Linearize::new(GatePrinter);
 ///     l.visit_program(&program).unwrap();
 /// }
 /// ```
 pub struct Linearize<T> {
     next_qid: u64,
     next_cid: u64,
-    depth: usize,
+    policy: ExpansionPolicy,
     defs: HashMap<Symbol, Rc<Definition>>,
     stack: Vec<Frame>,
     frame: Frame,
@@ -525,11 +627,11 @@ pub trait GateWriter: Sized {
 }
 
 impl<T: GateWriter> Linearize<T> {
-    pub fn new(writer: T, depth: usize) -> Linearize<T> {
+    pub fn new(writer: T) -> Linearize<T> {
         Linearize {
             next_qid: 0,
             next_cid: 0,
-            depth,
+            policy: ExpansionPolicy::new(),
             defs: HashMap::new(),
             stack: Vec::new(),
             frame: Frame {
@@ -543,6 +645,11 @@ impl<T: GateWriter> Linearize<T> {
             initialized: false,
             writer,
         }
+    }
+
+    pub fn with_policy(mut self, policy: ExpansionPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     // Check that these args are distinct.
@@ -619,6 +726,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         args: &[Span<Symbol>],
     ) -> Result<(), Self::Error> {
         let def = Definition {
+            name: name.clone(),
             args: args.iter().map(|s| s.to_symbol()).collect(),
             params: params.iter().map(|s| s.to_symbol()).collect(),
             gates: None,
@@ -637,6 +745,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         gates: &[Span<Stmt>],
     ) -> Result<(), Self::Error> {
         let def = Definition {
+            name: name.clone(),
             args: args.iter().map(|s| s.to_symbol()).collect(),
             params: params.iter().map(|s| s.to_symbol()).collect(),
             gates: Some(gates.to_vec()),
@@ -921,6 +1030,8 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         // First, evaluate all the parameters.
         let mut eval = FrameEvaluator { frame: &self.frame };
 
+        let expand = self.policy.permitted(self.stack.len(), &def.name);
+
         let mut values = Vec::new();
         for (param, name) in params.iter().zip(&def.params) {
             let value = self.err(eval.visit_expr(param).map_err(|e| match e {
@@ -935,7 +1046,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
             }))?;
 
             // If this is opaque, we will need the parameters as a list.
-            if def.gates.is_none() {
+            if def.gates.is_none() || !expand {
                 values.push(value);
             } else {
                 // Otherwise, just add them to the new stack frame.
@@ -977,7 +1088,7 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
             }
 
             match &def.gates {
-                Some(gates) if self.stack.len() < self.depth => {
+                Some(gates) if expand => {
                     // This gate has a body, so process it. First insert
                     // all of the arguments as quantum registers of size one.
                     for (name, arg) in def.args.iter().zip(&argsn) {
@@ -1022,7 +1133,12 @@ impl<T: GateWriter> ProgramVisitor for Linearize<T> {
         val: &Span<u64>,
         then: &Span<Stmt>,
     ) -> Result<(), Self::Error> {
-        let (base, size) = self.frame.qregs[&reg.name];
+        let (base, size) = self.frame.cregs[&reg.name];
+        let (base, size) = if let Some(idx) = reg.index {
+            (base + idx, 1)
+        } else {
+            (base, size)
+        };
         let err =self.writer
             .start_conditional(base as usize, size as usize, **val).map_err(|error| {
                 LinearizeErrorKind::WriterError {

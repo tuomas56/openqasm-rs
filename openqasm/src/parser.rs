@@ -177,6 +177,10 @@ impl Default for SourceCache {
     }
 }
 
+/// A file ID for use in `translate::ExpansionPolicy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileID(pub(crate) usize);
+
 impl SourceCache {
     /// Create an empty cache.
     pub fn new() -> SourceCache {
@@ -206,6 +210,11 @@ impl SourceCache {
     /// Get the path of the file that this `FileSpan` belongs to.
     pub fn get_path(&self, span: FileSpan) -> Option<&Path> {
         self.paths.get(&span.file).map(PathBuf::as_path)
+    }
+
+    /// Get the ID of the file at this path, if it has been parsed.
+    pub fn get_id<P: AsRef<Path>>(&self, path: P) -> Option<FileID> {
+        self.files.get(path.as_ref()).cloned().map(FileID)
     }
 
     fn add_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<usize> {
@@ -410,17 +419,20 @@ impl<'a> Parser<'a> {
     }
 
     /// Attempt to parse the file at the given path.
-    pub fn parse_file<P: AsRef<Path>>(&mut self, path: P) {
-        self.process_file(path, Path::new("."), None);
+    /// Returns a file-ID that can be used in `ExpansionPolicy`.
+    pub fn parse_file<P: AsRef<Path>>(&mut self, path: P) -> FileID {
+        FileID(self.process_file(path, Path::new("."), None))
     }
 
     /// Attempt to parse the given source code.
     /// If a path is given, this source will be associated with
     /// the given path in the cache, and any errors will show
     /// this as the file name.
-    pub fn parse_source<P: AsRef<Path>>(&mut self, source: String, path: Option<P>) {
+    /// Returns a file-ID that can be used in `ExpansionPolicy`.
+    pub fn parse_source<P: AsRef<Path>>(&mut self, source: String, path: Option<P>) -> FileID {
         let id = self.cache.add_source(source, path);
         self.parse_prog(id, false);
+        FileID(id)
     }
 
     /// Stop the parser and return any errors encountered or the parsed AST.
@@ -438,12 +450,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn process_file<P: AsRef<Path>>(&mut self, path: P, parent: &Path, from: Option<FileSpan>) {
+    fn process_file<P: AsRef<Path>>(&mut self, path: P, parent: &Path, from: Option<FileSpan>) -> usize {
         match self.policy {
-            FilePolicy::Deny => self.errors.push(ParseError::ReadUnableSandboxed {
-                path: path.as_ref().to_path_buf(),
-                from,
-            }),
+            FilePolicy::Deny => {
+                self.errors.push(ParseError::ReadUnableSandboxed {
+                    path: path.as_ref().to_path_buf(),
+                    from,
+                });
+                0
+            },
             FilePolicy::Ignore => {
                 if from.is_none() {
                     match parent
@@ -455,9 +470,17 @@ impl<'a> Parser<'a> {
                             from,
                             error,
                         }) {
-                        Ok(id) => self.parse_prog(id, from.is_none()),
-                        Err(e) => self.errors.push(e),
+                        Ok(id) => {
+                            self.parse_prog(id, from.is_none());
+                            id
+                        },
+                        Err(e) => {
+                            self.errors.push(e);
+                            0
+                        },
                     }
+                } else {
+                    0
                 }
             }
             FilePolicy::FileSystem { ref mut hardcoded } => {
@@ -467,11 +490,15 @@ impl<'a> Parser<'a> {
                         .canonicalize()
                         .and_then(|path| self.cache.add_file(path))
                     {
-                        Ok(id) => self.parse_prog(id, from.is_none()),
+                        Ok(id) => {
+                            self.parse_prog(id, from.is_none());
+                            0
+                        },
                         Err(_) => {
                             let source = source.clone();
                             let id = self.cache.add_source(source, Some(path));
                             self.parse_prog(id, false);
+                            id
                         }
                     }
                 } else {
@@ -484,27 +511,37 @@ impl<'a> Parser<'a> {
                             from,
                             error,
                         }) {
-                        Ok(id) => self.parse_prog(id, from.is_none()),
-                        Err(e) => self.errors.push(e),
+                        Ok(id) => {
+                            self.parse_prog(id, from.is_none());
+                            id
+                        },
+                        Err(e) => {
+                            self.errors.push(e);
+                            0
+                        },
                     }
                 }
             }
             FilePolicy::Custom(ref mut func) => {
                 if self.cache.is_cached(path.as_ref()) {
-                    return;
+                    return self.cache.files[path.as_ref()];
                 }
 
                 match func(path.as_ref()) {
-                    FileResult::Ignore => (),
+                    FileResult::Ignore => 0,
                     FileResult::Success(source) => {
                         let id = self.cache.add_source(source, Some(path));
                         self.parse_prog(id, from.is_none());
+                        id
                     }
-                    FileResult::Error(error) => self.errors.push(ParseError::ReadUnableCustom {
-                        path: path.as_ref().to_path_buf(),
-                        from,
-                        error,
-                    }),
+                    FileResult::Error(error) => {
+                        self.errors.push(ParseError::ReadUnableCustom {
+                            path: path.as_ref().to_path_buf(),
+                            from,
+                            error,
+                        });
+                        0
+                    },
                 }
             }
         }
