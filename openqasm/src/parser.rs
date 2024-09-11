@@ -129,10 +129,10 @@ mod generated {
         })]
         Identifier(Symbol),
 
-        #[regex(r"[0-9]+", |tok| tok.slice().parse())]
+        #[regex(r"[1-9]+[0-9]*|0", |tok| tok.slice().parse())]
         Integer(u64),
 
-        #[regex(r"[0-9]+\.[0-9]+", |tok| tok.slice().parse())]
+        #[regex(r"([0-9]+\.[0-9]*|[0-9]*\.[0-9]+)([eE][-+]?[0-9]+)?", |tok| tok.slice().parse())]
         Real(f32),
 
         #[regex(r#""[^"]*""#, |tok| {
@@ -435,6 +435,14 @@ impl<'a> Parser<'a> {
         FileID(id)
     }
 
+    /// Attempt to parse the given toplevel source code.
+    /// Same as `parse_source` but requires an "OPENQASM 2.0" signature at the top.
+    pub fn parse_toplevel_source<P: AsRef<Path>>(&mut self, source: String, path: Option<P>) -> FileID {
+        let id = self.cache.add_source(source, path);
+        self.parse_prog(id, true);
+        FileID(id)
+    }
+
     /// Stop the parser and return any errors encountered or the parsed AST.
     pub fn done(self) -> Result<Program, Vec<ParseError>> {
         if self.errors.is_empty() {
@@ -565,7 +573,7 @@ impl<'a> Parser<'a> {
 
         let parse = if toplevel {
             // If we are at the top level file, then we would expect to have
-            // a "OPENQASM 2.0" signature at the top,
+            // an "OPENQASM 2.0" signature at the top,
             generated::parser_impl::TopLevelParser::new().parse(id, lexer)
         } else {
             // but if this is an included file it may not be there,

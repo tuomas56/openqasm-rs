@@ -81,7 +81,6 @@
 //! and `serde::Deserialize` for all the AST types.
 //!
 
-#![deny(mutable_borrow_reservation_conflict)]
 #![cfg_attr(all(nightly_build, doc), feature(doc_auto_cfg))]
 
 #[macro_use]
