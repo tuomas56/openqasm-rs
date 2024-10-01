@@ -129,7 +129,7 @@ mod generated {
         })]
         Identifier(Symbol),
 
-        #[regex(r"[1-9]+[0-9]*|0", |tok| tok.slice().parse())]
+        #[regex(r"[0-9]+", |tok| tok.slice().parse())]
         Integer(u64),
 
         #[regex(r"([0-9]+\.[0-9]*|[0-9]*\.[0-9]+)([eE][-+]?[0-9]+)?", |tok| tok.slice().parse())]
