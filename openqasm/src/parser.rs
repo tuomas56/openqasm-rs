@@ -599,7 +599,7 @@ impl<'a> Parser<'a> {
                     },
                 },
                 // We had an EOF but we weren't done parsing.
-                PE::UnrecognizedEOF { location, expected } => ParseError::UnexpectedEOF {
+                PE::UnrecognizedEof { location, expected } => ParseError::UnexpectedEOF {
                     expected,
                     span: FileSpan {
                         start: location,

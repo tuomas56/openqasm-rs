@@ -10,7 +10,7 @@ description = "Utility to convert OpenQASM 2.0 programs to diagrams."
 [dependencies]
 openqasm = { path = "../openqasm", features = ["ariadne"] }
 clap = { version = "3.1.0", features = ["derive"] }
-minidom = "0.13.0"
+minidom = "0.16.0"
 rustybuzz = "0.5.0"
 exitcode = "1.1.2"
 tiny-skia = "0.6.3"
